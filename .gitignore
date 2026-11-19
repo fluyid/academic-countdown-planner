@@ -1,0 +1,23 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Secrets & local OAuth / API credentials (NEVER commit)
+credentials.json
+token.json
+.env
+.env.*
+
+# Local chat handoff note (gitignored)
+handoff.md
+handoff.mf
+
+# Generated ephemeral display outputs
+output/
+*.tmp
+
+# OS artifacts
+.DS_Store
+Thumbs.db

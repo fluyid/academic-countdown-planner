@@ -1,0 +1,66 @@
+{
+  "calendars": {
+    "personal": "Kai Nath",
+    "university": "IU"
+  },
+  "window": {
+    "anchor_label": "Intro to NLP Exam",
+    "anchor_date": "2026-12-14"
+  },
+  "targets": [
+    {
+      "id": "nlp-exam",
+      "type": "exam",
+      "name": "Introduction to NLP",
+      "date": "2026-12-14",
+      "units": 5,
+      "priority": 1
+    },
+    {
+      "id": "robotics-exam",
+      "type": "exam",
+      "name": "Introduction to Robotics",
+      "date": null,
+      "units": 5,
+      "priority": 1
+    },
+    {
+      "id": "linear-algebra-exam",
+      "type": "exam",
+      "name": "Linear Algebra",
+      "date": null,
+      "units": 5,
+      "priority": 1
+    },
+    {
+      "id": "ethics-essay",
+      "type": "assignment",
+      "name": "Ethics Essay",
+      "date": null,
+      "units": null,
+      "priority": 2
+    },
+    {
+      "id": "cv-assignment",
+      "type": "assignment",
+      "name": "Computer Vision Assignment",
+      "date": null,
+      "units": null,
+      "priority": 2
+    }
+  ],
+  "optional_work": {
+    "paper_reading": {
+      "description": "Read abstract + introduction and keep a note",
+      "priority": 3,
+      "drop_first_when_tight": true
+    }
+  },
+  "capacity_rules": {
+    "free_day_units": 1.0,
+    "class_day_max_hours": 3.5,
+    "class_day_units": 0.25,
+    "blocked_day_units": 0.0,
+    "blocked_keywords": ["trip", "exam", "date"]
+  }
+}
