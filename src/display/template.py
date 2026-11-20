@@ -2,9 +2,44 @@
 
 from __future__ import annotations
 
+import base64
 import html
 import json
+import mimetypes
+from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
+from urllib.request import url2pathname
+
+DEFAULT_FONTS_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
+
+_FONT_SPECS = (
+    ("Cyberway Riders", "CyberwayRiders.otf", "opentype", "font/otf", "400"),
+    ("Orbitron", "Orbitron-VariableFont_wght.ttf", "truetype", "font/ttf", "400 900"),
+    ("Rajdhani", "Rajdhani-Medium.ttf", "truetype", "font/ttf", "500"),
+    ("Rajdhani", "Rajdhani-SemiBold.ttf", "truetype", "font/ttf", "600"),
+    ("Rajdhani", "Rajdhani-Bold.ttf", "truetype", "font/ttf", "700"),
+)
+
+
+def _file_to_data_uri(path: Path, default_mime: str) -> str:
+    mime = mimetypes.guess_type(path.name)[0] or default_mime
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
+def _build_font_faces(fonts_dir: Path = DEFAULT_FONTS_DIR) -> str:
+    # Inline fonts as data URIs so Lively Wallpaper / Plash virtual hosts never block file:// loads.
+    rules = []
+    for family, filename, fmt, mime, weight in _FONT_SPECS:
+        path = fonts_dir / filename
+        if path.is_file():
+            uri = _file_to_data_uri(path, mime)
+            rules.append(
+                f'  @font-face {{ font-family: "{family}"; src: url("{uri}") format("{fmt}"); '
+                f"font-weight: {weight}; font-style: normal; font-display: block; }}"
+            )
+    return "\n".join(rules)
 
 
 def _esc(value: Any) -> str:
@@ -18,8 +53,13 @@ def _safe_css_url(url: str | None) -> str:
     lower = cleaned.lower()
     if not lower.startswith(("http://", "https://", "file://", "data:image/")):
         return ""
+    if lower.startswith("file://"):
+        parsed = urlparse(cleaned)
+        local = Path(url2pathname(unquote(parsed.path)))
+        if local.is_file():
+            cleaned = _file_to_data_uri(local, "image/jpeg")
     escaped = cleaned.replace("\\", "/").replace('"', "%22").replace("'", "%27").replace("(", "%28").replace(")", "%29")
-    return f'background-image: linear-gradient(180deg, rgba(10, 13, 20, 0.34), rgba(10, 13, 20, 0.56)), url("{escaped}");'
+    return f'background-image: linear-gradient(180deg, rgba(10, 13, 20, 0.24), rgba(10, 13, 20, 0.38)), url("{escaped}");'
 
 
 def _render_today_body(today: dict[str, Any]) -> str:
@@ -76,6 +116,7 @@ def render_display_html(data: dict[str, Any]) -> str:
     hms_html = '<span class="hms" id="countdown-hms">--:--:--</span>' if cd.get("target_iso") else ""
     milestone_count = len(data["milestones"])
     target_word = "target" if milestone_count == 1 else "targets"
+    font_faces = _build_font_faces()
 
     # Escape "</" so embedded JSON can never close the <script> tag.
     payload_json = json.dumps(
@@ -90,22 +131,26 @@ def render_display_html(data: dict[str, Any]) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{_esc(cd["label"])} &mdash; Study Countdown</title>
 <style>
+{font_faces}
   :root {{
     /* Windows + macOS lock-screen safe zones: top clock & bottom login stay clear. */
     --safe-top: clamp(148px, 22vh, 240px);
     --safe-bottom: clamp(108px, 18vh, 200px);
     --safe-side: clamp(24px, 4.5vw, 72px);
-    --card-w: min(400px, 36vw);
-    --glass-bg: rgba(13, 17, 25, 0.62);
-    --glass-border: rgba(255, 244, 228, 0.14);
-    --ink: #f5f2eb;
-    --ink-soft: rgba(245, 242, 235, 0.7);
-    --ink-faint: rgba(245, 242, 235, 0.48);
-    --accent: #f2b872;
-    --exam: #f2b872;
-    --assign: #8ab8e6;
-    --done: #7fd1a0;
-    --blocked: #e58f85;
+    --card-w: min(410px, 36vw);
+    --font-display: "Cyberway Riders", "Orbitron", system-ui, sans-serif;
+    --font-tech: "Orbitron", "Rajdhani", system-ui, sans-serif;
+    --font-body: "Rajdhani", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --glass-bg: rgba(7, 10, 20, 0.72);
+    --glass-border: rgba(0, 240, 255, 0.24);
+    --ink: #eef6ff;
+    --ink-soft: rgba(214, 232, 248, 0.82);
+    --ink-faint: rgba(186, 212, 238, 0.64);
+    --accent: #00f0ff;
+    --exam: #fcee0a;
+    --assign: #00f0ff;
+    --done: #38f2a8;
+    --blocked: #ff3b7a;
   }}
 
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -115,13 +160,14 @@ def render_display_html(data: dict[str, Any]) -> str:
     height: 100%;
     overflow: hidden;
     color: var(--ink);
-    font-family: "SF Pro Display", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
-    background-color: #0b0e14;
+    font-family: var(--font-body);
+    font-weight: 500;
+    background-color: #070a14;
     background-image:
-      radial-gradient(ellipse 68% 58% at 50% 42%, rgba(168, 102, 52, 0.34), transparent 70%),
-      radial-gradient(ellipse 52% 48% at 18% 82%, rgba(44, 62, 104, 0.42), transparent 72%),
-      radial-gradient(ellipse 55% 45% at 84% 24%, rgba(86, 56, 46, 0.3), transparent 70%),
-      linear-gradient(160deg, #0d111b 0%, #141723 48%, #181416 100%);
+      radial-gradient(ellipse 68% 58% at 50% 42%, rgba(0, 240, 255, 0.16), transparent 70%),
+      radial-gradient(ellipse 52% 48% at 18% 82%, rgba(255, 42, 109, 0.2), transparent 72%),
+      radial-gradient(ellipse 55% 45% at 84% 24%, rgba(56, 72, 148, 0.28), transparent 70%),
+      linear-gradient(160deg, #070a14 0%, #0d1224 48%, #120c1a 100%);
     background-size: cover;
     background-position: center;
     background-repeat: no-repeat;
@@ -143,11 +189,11 @@ def render_display_html(data: dict[str, Any]) -> str:
   .panel {{
     background: var(--glass-bg);
     border: 1px solid var(--glass-border);
-    border-radius: 20px;
+    border-radius: 16px;
     padding: clamp(18px, 2.1vh, 26px) clamp(18px, 2vw, 26px);
-    backdrop-filter: blur(18px) saturate(130%);
-    -webkit-backdrop-filter: blur(18px) saturate(130%);
-    box-shadow: 0 22px 48px rgba(0, 0, 0, 0.42);
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    box-shadow: 0 22px 48px rgba(0, 0, 0, 0.54), inset 0 1px 0 rgba(0, 240, 255, 0.14);
   }}
 
   .col-left {{
@@ -157,28 +203,35 @@ def render_display_html(data: dict[str, Any]) -> str:
   }}
 
   .eyebrow {{
-    font-size: 0.72rem;
-    font-weight: 600;
-    letter-spacing: 0.14em;
+    font-family: var(--font-display);
+    font-size: 1.05rem;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    word-spacing: 0.28em;
     text-transform: uppercase;
     color: var(--accent);
+    text-shadow: 0 0 14px rgba(0, 240, 255, 0.35);
   }}
 
   .countdown-title {{
     margin-top: 6px;
-    font-size: clamp(1.1rem, 1.55vw, 1.4rem);
-    font-weight: 600;
+    font-family: var(--font-tech);
+    font-size: clamp(1.05rem, 1.4vw, 1.3rem);
+    font-weight: 700;
+    letter-spacing: 0.02em;
     line-height: 1.25;
   }}
 
   .countdown-date {{
-    margin-top: 2px;
-    font-size: 0.88rem;
+    margin-top: 4px;
+    font-size: 0.98rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
     color: var(--ink-soft);
   }}
 
   .countdown-row {{
-    margin-top: clamp(10px, 1.6vh, 16px);
+    margin-top: clamp(12px, 1.6vh, 16px);
     display: flex;
     align-items: baseline;
     gap: 12px;
@@ -187,14 +240,17 @@ def render_display_html(data: dict[str, Any]) -> str:
   }}
 
   .days-num {{
-    font-size: clamp(2.8rem, 4.6vw, 4.2rem);
-    font-weight: 700;
+    font-family: var(--font-tech);
+    font-size: clamp(2.6rem, 4.4vw, 4rem);
+    font-weight: 800;
     line-height: 0.95;
-    letter-spacing: -0.03em;
+    letter-spacing: -0.02em;
+    text-shadow: 0 0 20px rgba(0, 240, 255, 0.22);
   }}
 
   .days-unit {{
-    font-size: 0.82rem;
+    font-family: var(--font-tech);
+    font-size: 0.78rem;
     font-weight: 600;
     letter-spacing: 0.14em;
     color: var(--ink-soft);
@@ -202,10 +258,12 @@ def render_display_html(data: dict[str, Any]) -> str:
 
   .hms {{
     margin-left: auto;
-    font-size: clamp(1rem, 1.35vw, 1.25rem);
-    font-weight: 500;
-    letter-spacing: 0.04em;
+    font-family: var(--font-tech);
+    font-size: clamp(0.95rem, 1.25vw, 1.18rem);
+    font-weight: 600;
+    letter-spacing: 0.06em;
     color: var(--accent);
+    text-shadow: 0 0 12px rgba(0, 240, 255, 0.32);
     font-variant-numeric: tabular-nums;
   }}
 
@@ -220,25 +278,45 @@ def render_display_html(data: dict[str, Any]) -> str:
   }}
 
   .section-title {{
-    font-size: 0.76rem;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }}
+
+  .section-heading {{
+    font-family: var(--font-display);
+    font-size: 1.05rem;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    word-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--accent);
+    text-shadow: 0 0 12px rgba(0, 240, 255, 0.28);
+  }}
+
+  .section-date {{
+    font-size: 0.92rem;
     font-weight: 600;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--ink-soft);
   }}
 
   .badge {{
-    font-size: 0.72rem;
-    font-weight: 600;
-    padding: 3px 9px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 2px 10px;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.09);
+    background: rgba(0, 240, 255, 0.1);
+    border: 1px solid rgba(0, 240, 255, 0.22);
     color: var(--ink);
     white-space: nowrap;
   }}
-  .badge--study {{ color: var(--accent); background: rgba(242, 184, 114, 0.14); }}
-  .badge--done {{ color: var(--done); background: rgba(127, 209, 160, 0.15); }}
-  .badge--blocked {{ color: var(--blocked); background: rgba(229, 143, 133, 0.15); }}
+  .badge--study {{ color: var(--exam); background: rgba(252, 238, 10, 0.12); border-color: rgba(252, 238, 10, 0.3); }}
+  .badge--done {{ color: var(--done); background: rgba(56, 242, 168, 0.14); border-color: rgba(56, 242, 168, 0.32); }}
+  .badge--blocked {{ color: var(--blocked); background: rgba(255, 59, 122, 0.14); border-color: rgba(255, 59, 122, 0.34); }}
 
   .task-list, .milestone-list {{
     list-style: none;
@@ -253,23 +331,23 @@ def render_display_html(data: dict[str, Any]) -> str:
     align-items: baseline;
     gap: 10px;
     padding-bottom: 8px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    border-bottom: 1px solid rgba(0, 240, 255, 0.1);
   }}
   .task-item:last-child {{ padding-bottom: 0; border-bottom: none; }}
   .task-item--optional .task-name {{ color: var(--ink-soft); }}
-  .task-name {{ font-size: 0.95rem; font-weight: 500; line-height: 1.3; }}
-  .task-meta {{ font-size: 0.8rem; color: var(--ink-soft); white-space: nowrap; font-variant-numeric: tabular-nums; }}
+  .task-name {{ font-size: 1.06rem; font-weight: 600; line-height: 1.25; }}
+  .task-meta {{ font-size: 0.92rem; font-weight: 600; color: var(--ink-soft); white-space: nowrap; font-variant-numeric: tabular-nums; }}
 
-  .today-state {{ font-size: 1rem; font-weight: 600; }}
-  .subtle-line {{ margin-top: 6px; font-size: 0.82rem; color: var(--ink-soft); line-height: 1.35; }}
-  .next-line {{ margin-top: 8px; font-size: 0.8rem; color: var(--ink-faint); }}
+  .today-state {{ font-family: var(--font-tech); font-size: 1rem; font-weight: 600; }}
+  .subtle-line {{ margin-top: 6px; font-size: 0.94rem; font-weight: 500; color: var(--ink-soft); line-height: 1.35; }}
+  .next-line {{ margin-top: 8px; font-size: 0.9rem; font-weight: 600; color: var(--ink-faint); }}
 
   .milestone {{
     display: flex;
     flex-direction: column;
     gap: 5px;
     padding-bottom: 9px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    border-bottom: 1px solid rgba(0, 240, 255, 0.1);
   }}
   .milestone:last-child {{ padding-bottom: 0; border-bottom: none; }}
   .milestone--done .milestone-name {{ color: var(--done); }}
@@ -280,8 +358,8 @@ def render_display_html(data: dict[str, Any]) -> str:
     align-items: baseline;
     gap: 10px;
   }}
-  .milestone-name {{ font-size: 0.92rem; font-weight: 500; line-height: 1.25; }}
-  .milestone-date {{ font-size: 0.82rem; font-weight: 600; color: var(--accent); white-space: nowrap; }}
+  .milestone-name {{ font-size: 1.04rem; font-weight: 600; line-height: 1.2; }}
+  .milestone-date {{ font-size: 0.94rem; font-weight: 700; letter-spacing: 0.04em; color: var(--exam); white-space: nowrap; }}
 
   .milestone-sub {{
     display: flex;
@@ -289,11 +367,11 @@ def render_display_html(data: dict[str, Any]) -> str:
     gap: 8px;
   }}
   .kind-tag {{
-    font-size: 0.66rem;
-    font-weight: 600;
-    letter-spacing: 0.06em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
-    min-width: 72px;
+    min-width: 78px;
   }}
   .kind-exam {{ color: var(--exam); }}
   .kind-assignment {{ color: var(--assign); }}
@@ -302,17 +380,18 @@ def render_display_html(data: dict[str, Any]) -> str:
     flex: 1;
     height: 4px;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.14);
     overflow: hidden;
   }}
   .bar-fill {{
     display: block;
     height: 100%;
     border-radius: 999px;
-    background: linear-gradient(90deg, var(--accent), #f8d49d);
+    background: linear-gradient(90deg, var(--accent), var(--exam));
   }}
   .milestone-prog {{
-    font-size: 0.74rem;
+    font-size: 0.86rem;
+    font-weight: 600;
     color: var(--ink-soft);
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
@@ -321,8 +400,9 @@ def render_display_html(data: dict[str, Any]) -> str:
   .status-note {{
     margin-top: 12px;
     padding-top: 10px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-    font-size: 0.76rem;
+    border-top: 1px solid rgba(0, 240, 255, 0.12);
+    font-size: 0.88rem;
+    font-weight: 600;
     color: var(--blocked);
   }}
 
@@ -356,7 +436,7 @@ def render_display_html(data: dict[str, Any]) -> str:
 
       <section class="panel" aria-label="Today's Study Task">
         <div class="section-head">
-          <span class="section-title">Today &middot; {_esc(today["date_label"])}</span>
+          <span class="section-title"><span class="section-heading">Today</span><span class="section-date">&middot; {_esc(today["date_label"])}</span></span>
           <span class="badge {status_cls}">{_esc(today["badge"])}</span>
         </div>
         {_render_today_body(today)}
@@ -365,7 +445,7 @@ def render_display_html(data: dict[str, Any]) -> str:
 
     <section class="panel" aria-label="Upcoming Milestones">
       <div class="section-head">
-        <span class="section-title">Milestones</span>
+        <span class="section-heading">Milestones</span>
         <span class="badge">{milestone_count} {target_word}</span>
       </div>
       {_render_milestones(data["milestones"])}

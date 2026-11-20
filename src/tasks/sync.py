@@ -94,9 +94,10 @@ def sync_plan_to_tasks(
 
 
 def format_sync_summary(result: SyncResult) -> str:
+    day_word = "day" if result.total_study_days == 1 else "days"
     return (
         f"Synced to Google Tasks list '{result.list_name}': "
-        f"{result.total_study_days} open study days "
+        f"{result.total_study_days} open study {day_word} "
         f"(+{result.created} created, ~{result.updated} updated, "
         f"-{result.deleted} deleted, ={result.unchanged} unchanged, "
         f"{result.completed_preserved} completed preserved)"

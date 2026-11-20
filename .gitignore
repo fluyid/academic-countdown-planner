@@ -18,6 +18,7 @@ handoff.mf
 output/
 *.tmp
 
-# OS artifacts
+# OS artifacts & archives
 .DS_Store
 Thumbs.db
+*.zip

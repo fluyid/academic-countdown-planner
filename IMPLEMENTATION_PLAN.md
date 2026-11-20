@@ -113,7 +113,7 @@ Build a local, zero-hosting **Python academic countdown & study-planner app** fo
 | **4** | **Display Page** | Single HTML page shows countdown + today's task over placeholder background, respecting OS safe zones. | Done |
 | **5** | **Lock Screen & Wallpaper** | Scheduled screenshot becomes lock screen on Mac, then Windows; Plash & Lively show live page. | Done |
 | **6** | **Gemini Replan** | Plain-language input (e.g., *"I have plans on the 28th"*) adds event, reshuffles units, ticks/echoes tasks, explains plan, refreshes screen. | Done |
-| **7** | **Polish & Feature Freeze** | Gemini-made cozy background in place, every word proofread, layout checked on both screens. | Next |
+| **7** | **Polish & Feature Freeze** | Gemini-made cyberpunk city background & bundled HUD fonts in place, every word proofread, layout checked on both screens. | Done |
 
 ---
 

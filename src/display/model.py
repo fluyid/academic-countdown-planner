@@ -10,6 +10,8 @@ from urllib.parse import urlparse
 from src.planner.models import Allocation, DayPlan, EPS, StudyPlan, TargetSummary
 
 MAX_MILESTONES = 6
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+DEFAULT_BACKGROUND_PATH = REPO_ROOT / "assets" / "background.jpg"
 
 
 def format_short_date(d: date) -> str:
@@ -41,7 +43,10 @@ def _resolve_background(background: str | Path | None) -> str | None:
         return raw if raw.lower().startswith("data:image/") else None
     if len(scheme) > 1:
         return None
-    return Path(raw).expanduser().resolve().as_uri()
+    path = Path(raw).expanduser()
+    if not path.is_absolute() and (REPO_ROOT / path).is_file():
+        path = REPO_ROOT / path
+    return path.resolve().as_uri()
 
 
 def _pick_countdown(plan: StudyPlan, config: dict[str, Any], today: date) -> dict[str, Any]:
@@ -188,7 +193,11 @@ def build_display_data(
     ref_day = today or plan.start_date
     done_units = completed_units or {}
     done_days = completed_days or set()
-    bg_source = background if background is not None else config.get("display", {}).get("background")
+    if background is not None:
+        bg_source: str | Path | None = background
+    else:
+        cfg_bg = config.get("display", {}).get("background")
+        bg_source = cfg_bg if cfg_bg is not None else (DEFAULT_BACKGROUND_PATH if DEFAULT_BACKGROUND_PATH.is_file() else None)
     return {
         "generated_for": ref_day.isoformat(),
         "countdown": _pick_countdown(plan, config, ref_day),

@@ -10,7 +10,15 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from src.display import MAX_MILESTONES, build_display_data, render_display_html, write_display
+from unittest import mock
+
+from src.display import (
+    DEFAULT_BACKGROUND_PATH,
+    MAX_MILESTONES,
+    build_display_data,
+    render_display_html,
+    write_display,
+)
 from src.planner import build_plan, load_config
 
 
@@ -111,6 +119,32 @@ class TestSlice4Display(unittest.TestCase):
         self.assertNotIn("<img src=x", html_doc)
         self.assertIn("&lt;/script&gt;", html_doc)
         self.assertNotIn("javascript:", html_doc)
+
+    def test_default_background_and_overrides(self) -> None:
+        plan = build_plan(self.config, [], start_date=date(2026, 11, 20))
+
+        # Default uses bundled cyberpunk background + local font faces when present.
+        default_data = build_display_data(plan, self.config)
+        self.assertTrue(DEFAULT_BACKGROUND_PATH.is_file())
+        self.assertEqual(default_data["background_url"], DEFAULT_BACKGROUND_PATH.resolve().as_uri())
+        rendered = render_display_html(default_data)
+        self.assertIn("data:image/jpeg;base64,", rendered)
+        for family in ("Cyberway Riders", "Orbitron", "Rajdhani"):
+            self.assertIn(f'font-family: "{family}"', rendered)
+
+        # Explicit URL or path overrides default.
+        custom_data = build_display_data(plan, self.config, background="https://example.com/custom.png")
+        self.assertEqual(custom_data["background_url"], "https://example.com/custom.png")
+
+        # Empty string explicitly disables image (falls back to CSS gradient).
+        none_data = build_display_data(plan, self.config, background="")
+        self.assertIsNone(none_data["background_url"])
+
+        # Missing default asset gracefully falls back to None.
+        missing = Path(DEFAULT_BACKGROUND_PATH.parent / "__nonexistent_bg__.jpg")
+        with mock.patch("src.display.model.DEFAULT_BACKGROUND_PATH", missing):
+            fallback_data = build_display_data(plan, self.config)
+        self.assertIsNone(fallback_data["background_url"])
 
     def test_write_display_outputs_ephemeral_html_and_json(self) -> None:
         plan = build_plan(self.config, [], start_date=date(2026, 11, 20))
