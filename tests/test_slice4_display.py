@@ -189,6 +189,37 @@ class TestSlice4Display(unittest.TestCase):
         self.assertEqual(default_data["card_opacity"], 0.28)
         self.assertIn("--glass-bg: rgba(7, 10, 20, 0.28);", render_display_html(default_data))
 
+    def test_combined_five_milestones_and_paper_reading_today_panel(self) -> None:
+        plan = build_plan(self.config, [], start_date=date(2026, 11, 20))
+        completed = {
+            "ethics-essay:reading": 1.0,
+            "ethics-essay": 1.0,
+            "cv-assignment:reading": 1.5,
+            "cv-assignment": 0.5,
+        }
+        # Dec 5 is the first Priority 2 required paper reading day (Ethics 20p + CV 20p).
+        data = build_display_data(plan, self.config, today=date(2026, 12, 5), completed_units=completed)
+        html_doc = render_display_html(data)
+
+        # HUD stays clean at 5 combined milestones (3 exams + Ethics Essay + CV Assignment).
+        self.assertEqual(len(data["milestones"]), 5)
+        by_name = {m["name"]: m for m in data["milestones"]}
+        self.assertEqual(by_name["Ethics Essay"]["progress_label"], "2/4 units")
+        self.assertEqual(by_name["Ethics Essay"]["percent"], 50)
+        self.assertEqual(by_name["Computer Vision Assignment"]["progress_label"], "2/3.5 units")
+        self.assertEqual(by_name["Computer Vision Assignment"]["percent"], 57)
+
+        # Today's panel clearly labels required paper reading with units & pages.
+        self.assertEqual(len(data["today"]["items"]), 2)
+        self.assertEqual(data["today"]["items"][0]["name"], "Ethics Essay — Required Paper Reading")
+        self.assertEqual(data["today"]["items"][0]["units"], "0.5 units (20 pages)")
+        self.assertEqual(data["today"]["items"][0]["progress"], "0.5/2 units")
+        self.assertFalse(data["today"]["items"][0]["is_optional"])
+        self.assertEqual(data["today"]["items"][1]["name"], "Computer Vision Assignment — Required Paper Reading")
+        self.assertEqual(data["today"]["items"][1]["units"], "0.5 units (20 pages)")
+        body_html = html_doc.split("<body>", 1)[1].split("<script", 1)[0]
+        self.assertIsNone(re.search(r"\d+u\b", body_html))
+
     def test_write_display_outputs_ephemeral_html_and_json(self) -> None:
         plan = build_plan(self.config, [], start_date=date(2026, 11, 20))
         with tempfile.TemporaryDirectory() as tmp:

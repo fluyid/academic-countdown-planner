@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.planner.models import EPS, StudyPlan
+from src.planner.models import Allocation, EPS, StudyPlan
 
 
 def _fmt_num(value: float) -> str:
@@ -24,6 +24,17 @@ def format_unit_ratio(done: float, total: float) -> str:
     return f"{_fmt_num(done)}/{_fmt_num(cleaned_total)} {word}"
 
 
+def format_pages(value: float) -> str:
+    cleaned = round(float(value), 4)
+    word = "page" if abs(cleaned - 1.0) < EPS else "pages"
+    return f"{_fmt_num(cleaned)} {word}"
+
+
+def format_allocation_amount(alloc: Allocation) -> str:
+    base = format_units(alloc.units)
+    return f"{base}, {format_pages(alloc.pages)}" if alloc.pages is not None else base
+
+
 def format_plan(plan: StudyPlan) -> str:
     total_cap = round(sum(d.capacity for d in plan.days), 4)
     total_sched = round(sum(a.units for d in plan.days for a in d.allocations), 4)
@@ -41,9 +52,9 @@ def format_plan(plan: StudyPlan) -> str:
         if d.allocations:
             parts = [
                 (
-                    f"{a.name} ({format_units(a.units)}, {format_unit_ratio(a.cumulative, a.total)})"
+                    f"{a.name} ({format_allocation_amount(a)}, {format_unit_ratio(a.cumulative, a.total)})"
                     if a.total is not None
-                    else f"{a.name} ({format_units(a.units)})"
+                    else f"{a.name} ({format_allocation_amount(a)})"
                 )
                 for a in d.allocations
             ]
@@ -58,11 +69,19 @@ def format_plan(plan: StudyPlan) -> str:
     for t in plan.targets:
         due = t.due_date.isoformat() if t.due_date else "TBD"
         kind = "exam" if t.target_type == "exam" else "due"
-        lines.append(f"  [P{t.priority}] {t.name}: {format_unit_ratio(t.scheduled, t.required)} ({kind} {due})")
+        if t.reading_required > EPS:
+            work_sched = round(max(0.0, t.scheduled - t.reading_scheduled), 4)
+            work_req = round(max(0.0, t.required - t.reading_required), 4)
+            detail = f"reading {format_unit_ratio(t.reading_scheduled, t.reading_required)} + work {format_unit_ratio(work_sched, work_req)}, {kind} {due}"
+        else:
+            detail = f"{kind} {due}"
+        lines.append(f"  [P{t.priority}] {t.name}: {format_unit_ratio(t.scheduled, t.required)} ({detail})")
     if plan.optional_shed:
         lines.append("  [P3] Optional Paper Reading: 0 units (dropped -- tight schedule)")
     elif plan.optional_units > EPS:
-        lines.append(f"  [P3] Optional Paper Reading: {format_units(plan.optional_units)}")
+        opt_pages = round(sum(a.pages or 0.0 for d in plan.days for a in d.allocations if a.target_id == "paper-reading"), 4)
+        page_note = f" ({format_pages(opt_pages)})" if opt_pages > EPS else ""
+        lines.append(f"  [P3] Optional Paper Reading: {format_units(plan.optional_units)}{page_note}")
     if plan.unscheduled:
         shortfall = ", ".join(f"{name} ({format_units(units)})" for name, units in plan.unscheduled.items())
         lines.append(f"Unscheduled: {shortfall}")

@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from src.planner.formatter import format_unit_ratio, format_units
-from src.planner.models import Allocation, DayPlan, EPS, StudyPlan, TargetSummary
+from src.planner.formatter import format_pages, format_unit_ratio, format_units
+from src.planner.models import Allocation, DayPlan, EPS, StudyPlan, TargetSummary, reading_target_id
 
 MAX_MILESTONES = 6
 DEFAULT_CARD_OPACITY = 0.28
@@ -101,10 +101,11 @@ def _pick_countdown(plan: StudyPlan, config: dict[str, Any], today: date) -> dic
 def _allocation_item(alloc: Allocation) -> dict[str, Any]:
     is_optional = alloc.target_id == "paper-reading"
     name = "Optional Paper Reading" if is_optional else alloc.name
+    units = f"{format_units(alloc.units)} ({format_pages(alloc.pages)})" if alloc.pages is not None else format_units(alloc.units)
     progress = format_unit_ratio(alloc.cumulative, alloc.total) if alloc.total is not None else "Optional"
     return {
         "name": name,
-        "units": format_units(alloc.units),
+        "units": units,
         "progress": progress,
         "is_optional": is_optional,
     }
@@ -168,7 +169,11 @@ def _build_milestones(
     )
     milestones: list[dict[str, Any]] = []
     for _, t in ordered[:max_milestones]:
-        done = round(max(0.0, float(completed_units.get(t.target_id, 0.0))), 4)
+        done = round(
+            max(0.0, float(completed_units.get(t.target_id, 0.0)))
+            + max(0.0, float(completed_units.get(reading_target_id(t.target_id), 0.0))),
+            4,
+        )
         req = round(max(0.0, float(t.required)), 4)
         pct = min(100, round((done / req) * 100)) if req > EPS else 0
         milestones.append(

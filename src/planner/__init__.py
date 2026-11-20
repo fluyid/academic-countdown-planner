@@ -1,8 +1,16 @@
 """Pure Python deterministic study planner package."""
 
 from src.planner.capacity import classify_days
-from src.planner.formatter import format_plan, format_unit_ratio, format_units
-from src.planner.models import Allocation, DayPlan, StudyPlan, TargetSummary, load_config, plan_window
+from src.planner.formatter import format_allocation_amount, format_pages, format_plan, format_unit_ratio, format_units
+from src.planner.models import (
+    Allocation,
+    DayPlan,
+    StudyPlan,
+    TargetSummary,
+    load_config,
+    plan_window,
+    reading_target_id,
+)
 from src.planner.scheduler import build_plan
 
 __all__ = [
@@ -12,9 +20,12 @@ __all__ = [
     "TargetSummary",
     "build_plan",
     "classify_days",
+    "format_allocation_amount",
+    "format_pages",
     "format_plan",
     "format_unit_ratio",
     "format_units",
     "load_config",
     "plan_window",
+    "reading_target_id",
 ]
