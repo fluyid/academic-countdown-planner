@@ -11,6 +11,8 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 
+from src.display.model import clamp_card_opacity
+
 DEFAULT_FONTS_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
 
 _FONT_SPECS = (
@@ -116,6 +118,7 @@ def render_display_html(data: dict[str, Any]) -> str:
     hms_html = '<span class="hms" id="countdown-hms">--:--:--</span>' if cd.get("target_iso") else ""
     milestone_count = len(data["milestones"])
     target_word = "target" if milestone_count == 1 else "targets"
+    card_opacity = clamp_card_opacity(data.get("card_opacity"))
     font_faces = _build_font_faces()
 
     # Escape "</" so embedded JSON can never close the <script> tag.
@@ -141,11 +144,11 @@ def render_display_html(data: dict[str, Any]) -> str:
     --font-display: "Cyberway Riders", "Orbitron", system-ui, sans-serif;
     --font-tech: "Orbitron", "Rajdhani", system-ui, sans-serif;
     --font-body: "Rajdhani", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
-    --glass-bg: rgba(7, 10, 20, 0.72);
-    --glass-border: rgba(0, 240, 255, 0.24);
-    --ink: #eef6ff;
-    --ink-soft: rgba(214, 232, 248, 0.82);
-    --ink-faint: rgba(186, 212, 238, 0.64);
+    --glass-bg: rgba(7, 10, 20, {card_opacity:g});
+    --glass-border: rgba(0, 240, 255, 0.28);
+    --ink: #f2f8ff;
+    --ink-soft: rgba(226, 240, 255, 0.9);
+    --ink-faint: rgba(202, 224, 246, 0.78);
     --accent: #00f0ff;
     --exam: #fcee0a;
     --assign: #00f0ff;
@@ -194,6 +197,7 @@ def render_display_html(data: dict[str, Any]) -> str:
     backdrop-filter: blur(18px) saturate(140%);
     -webkit-backdrop-filter: blur(18px) saturate(140%);
     box-shadow: 0 22px 48px rgba(0, 0, 0, 0.54), inset 0 1px 0 rgba(0, 240, 255, 0.14);
+    text-shadow: 0 1px 6px rgba(4, 7, 15, 0.72);
   }}
 
   .col-left {{

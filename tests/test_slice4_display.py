@@ -14,8 +14,10 @@ from unittest import mock
 
 from src.display import (
     DEFAULT_BACKGROUND_PATH,
+    DEFAULT_CARD_OPACITY,
     MAX_MILESTONES,
     build_display_data,
+    clamp_card_opacity,
     render_display_html,
     write_display,
 )
@@ -35,11 +37,19 @@ class TestSlice4Display(unittest.TestCase):
         self.assertEqual(data["countdown"]["date_label"], "Dec 14, 2026")
         self.assertEqual(data["countdown"]["days_left"], 24)
         self.assertEqual(data["milestones"][0]["date_label"], "Dec 14")
-        self.assertEqual(data["milestones"][0]["progress_label"], "2/5u")
+        self.assertEqual(data["milestones"][0]["progress_label"], "2/5 units")
         self.assertEqual(data["milestones"][0]["percent"], 40)
+        self.assertEqual(data["today"]["badge"], "Free day · 1 unit")
+        self.assertEqual(data["today"]["items"][0]["units"], "1 unit")
+        self.assertEqual(data["today"]["items"][0]["progress"], "1/5 units")
+        self.assertEqual(data["card_opacity"], DEFAULT_CARD_OPACITY)
+        self.assertIn("--glass-bg: rgba(7, 10, 20, 0.48);", html_doc)
 
         self.assertNotIn("T-minus", html_doc)
         self.assertIsNone(re.search(r"\bT-\d+", html_doc))
+        # Ensure zero cryptic '1u' / '2/5u' unit labels leak into visible display HTML.
+        body_html = html_doc.split("<body>", 1)[1].split("<script", 1)[0]
+        self.assertIsNone(re.search(r"\d+u\b", body_html))
         self.assertIn("Dec 14, 2026", html_doc)
         self.assertIn("--safe-top:", html_doc)
         self.assertIn("--safe-bottom:", html_doc)
@@ -145,6 +155,39 @@ class TestSlice4Display(unittest.TestCase):
         with mock.patch("src.display.model.DEFAULT_BACKGROUND_PATH", missing):
             fallback_data = build_display_data(plan, self.config)
         self.assertIsNone(fallback_data["background_url"])
+
+    def test_card_opacity_clamping_and_clear_unit_labels(self) -> None:
+        self.assertEqual(clamp_card_opacity(None), DEFAULT_CARD_OPACITY)
+        self.assertEqual(clamp_card_opacity("invalid"), DEFAULT_CARD_OPACITY)
+        self.assertEqual(clamp_card_opacity(True), DEFAULT_CARD_OPACITY)
+        self.assertEqual(clamp_card_opacity(float("nan")), DEFAULT_CARD_OPACITY)
+        self.assertEqual(clamp_card_opacity(0.05), 0.2)
+        self.assertEqual(clamp_card_opacity(1.5), 0.95)
+        self.assertEqual(clamp_card_opacity(0.62), 0.62)
+
+        # Class day + tight schedule deficit verifies fractional units and status note wording.
+        cfg = copy.deepcopy(self.config)
+        cfg["display"] = {"card_opacity": 0.1}
+        class_event = [{"summary": "NLP Lecture", "start": {"dateTime": "2026-12-04T09:00:00+01:00"}, "end": {"dateTime": "2026-12-04T11:00:00+01:00"}}]
+        plan = build_plan(cfg, class_event, start_date=date(2026, 12, 4))
+        data = build_display_data(plan, cfg)
+        html_doc = render_display_html(data)
+
+        self.assertEqual(data["card_opacity"], 0.2)
+        self.assertIn("--glass-bg: rgba(7, 10, 20, 0.2);", html_doc)
+        self.assertEqual(data["today"]["badge"], "Class day · 0.25 units")
+        self.assertEqual(data["today"]["items"][0]["units"], "0.25 units")
+        self.assertEqual(data["today"]["items"][0]["progress"], "0.25/5 units")
+        self.assertIn("units)", data["status_note"])
+        body_html = html_doc.split("<body>", 1)[1].split("<script", 1)[0]
+        self.assertIsNone(re.search(r"\d+u\b", body_html))
+
+        # Config without display section defaults cleanly to 0.48.
+        cfg_no_display = copy.deepcopy(self.config)
+        cfg_no_display.pop("display", None)
+        default_data = build_display_data(plan, cfg_no_display)
+        self.assertEqual(default_data["card_opacity"], 0.48)
+        self.assertIn("--glass-bg: rgba(7, 10, 20, 0.48);", render_display_html(default_data))
 
     def test_write_display_outputs_ephemeral_html_and_json(self) -> None:
         plan = build_plan(self.config, [], start_date=date(2026, 11, 20))

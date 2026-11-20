@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import copy
+import re
 import unittest
 from datetime import date
 
 from src.calendar_client import get_events_in_window
-from src.planner import build_plan, classify_days, format_plan, load_config
+from src.planner import build_plan, classify_days, format_plan, format_unit_ratio, format_units, load_config
 
 
 def _timed(summary: str, start: str, end: str, **extra) -> dict:
@@ -107,8 +108,14 @@ class TestSlice2Planner(unittest.TestCase):
         self.assertTrue(plan.optional_shed)
         text = format_plan(plan)
         self.assertIn("Unscheduled:", text)
-        self.assertIn("Linear Algebra (5.00u)", text)
+        self.assertIn("Linear Algebra (5 units)", text)
         self.assertIn("dropped -- tight schedule", text)
+        self.assertIsNone(re.search(r"\d+u\b", text))
+        self.assertEqual(format_units(1.0), "1 unit")
+        self.assertEqual(format_units(0.5), "0.5 units")
+        self.assertEqual(format_units(0.0), "0 units")
+        self.assertEqual(format_unit_ratio(1.0, 5.0), "1/5 units")
+        self.assertEqual(format_unit_ratio(1.0, 1.0), "1/1 unit")
 
     def test_class_days_accumulate_quarter_units_and_respect_earlier_exam_deadline(self) -> None:
         cfg = copy.deepcopy(self.config)

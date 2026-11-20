@@ -123,4 +123,17 @@ Build a local, zero-hosting **Python academic countdown & study-planner app** fo
 - **Scope Rule:** Any new idea goes on the **Version 2 Parking Lot** below—never into the code.
 
 ### Version 2 Parking Lot
-- *(Empty)*
+- *(Moved to the Version 2 Roadmap below.)*
+
+---
+
+## Version 2 Roadmap (Branch: `v2.0`, Branched Off `v1.0`)
+
+> `v1.0` stays frozen on `master` for submission. All Version 2 work lives on branch `v2.0`, keeping `/ponytail` (full) code style, secrets strictly outside the repo (`~/.config/countdown-planner/`), zero-accidental-billing guardrails, and test + `git commit` after every slice.
+
+| V2 Slice | Name | Scope & Done Criteria | Status |
+| :---: | :--- | :--- | :---: |
+| **V2-1** | **Branch & UI Polish** | Cut `v2.0` off `v1.0`; lower HUD card `--glass-bg` alpha to `0.48` (configurable via `config["display"]["card_opacity"]`, clamped `[0.2, 0.95]`) with crisp contrast; replace `u`-suffixed labels (`1/5u`, `0.5u`, `1u`) with clear wording (`1/5 units`, `0.5 units`, `1 unit`) across display, CLI plan, Tasks (keeping `[countdown-planner]` JSON metadata backwards-compatible), and Gemini explanations. | Done |
+| **V2-2** | **Required Paper Reading & 40p/Day Cap** | Keep 5 combined milestones on the HUD. Add Priority 2 required paper reading (never dropped when tight) for **Ethics Essay** (4 papers, 20p each = 2.0 units) and **Computer Vision** (3 papers, 20p each = 1.5 units); extra reading stays Priority 3 optional. Enforce a hard **40 pages/day** reading cap across all subjects combined in pure Python (`src/planner/scheduler.py`). | Pending |
+| **V2-3** | **Gemini Voice Replan (`cli.py voice`)** | Extend `src/gemini/client.py` to support short `audio/wav` `inlineData` under all existing Flash-only / `thinkingLevel: "MINIMAL"` / 25-call daily cap / zero-retry guardrails. Add `src/voice/` mic capture (`sounddevice` + silence stop) and `cli.py voice` (plus `--file`) wired into pure-Python replan, Tasks sync, screen refresh, and optional free local OS TTS readout. | Pending |
+| **V2-4** | **Offline "Hey Gemini" Wake-Word Listener (`cli.py listen`)** | 100% local, offline wake-word detection (grammar-constrained `vosk` matching `"hey gemini"`, \$0 and 0 Gemini calls while idle) triggering the V2-3 voice replan loop. | Pending |

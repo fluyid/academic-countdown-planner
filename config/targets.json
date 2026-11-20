@@ -6,6 +6,9 @@
   "tasks": {
     "list_name": "Countdown Planner (Test)"
   },
+  "display": {
+    "card_opacity": 0.48
+  },
   "window": {
     "anchor_label": "Intro to NLP Exam",
     "anchor_date": "2026-12-14"

@@ -7,6 +7,7 @@ from datetime import date
 from typing import Any, Callable
 
 from src.gemini.client import generate_content
+from src.planner.formatter import format_unit_ratio, format_units
 from src.planner.models import DayPlan, EPS, StudyPlan
 
 EXPLAIN_MAX_OUTPUT_TOKENS = 220
@@ -21,9 +22,9 @@ _SYSTEM_PROMPT = (
 def _day_label(day_plan: DayPlan) -> str:
     if day_plan.allocations:
         return " + ".join(
-            f"{a.name} ({round(a.units, 4):g}u, {round(a.cumulative, 4):g}/{round(a.total, 4):g})"
+            f"{a.name} ({format_units(a.units)}, {format_unit_ratio(a.cumulative, a.total)})"
             if a.total is not None
-            else f"{a.name} ({round(a.units, 4):g}u)"
+            else f"{a.name} ({format_units(a.units)})"
             for a in day_plan.allocations
         )
     if day_plan.day_type == "blocked":
@@ -75,7 +76,7 @@ def summarize_plan_changes(
         "optional_paper_reading": (
             "dropped (tight schedule)"
             if after.optional_shed
-            else f"{round(after.optional_units, 4):g}u scheduled"
+            else f"{format_units(after.optional_units)} scheduled"
             if after.optional_units > EPS
             else "none"
         ),

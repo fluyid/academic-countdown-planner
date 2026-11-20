@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 from datetime import date
 from typing import Any
@@ -116,19 +117,33 @@ class TestSlice3Tasks(unittest.TestCase):
             allocations=[Allocation("nlp-exam", "Introduction to NLP", 1, 1.0, 1.0, 5.0)],
         )
         body = build_task_body(day_plan)
-        self.assertEqual(body["title"], "Introduction to NLP (1u, 1/5)")
+        self.assertEqual(body["title"], "Introduction to NLP (1 unit, 1/5 units)")
         self.assertEqual(body["due"], "2026-11-20T00:00:00.000Z")
+        self.assertIn("Day: 2026-11-20 (free, 1 unit)", body["notes"])
+        self.assertIn("- Introduction to NLP: 1 unit (1/5 units)", body["notes"])
+        self.assertIsNone(re.search(r"\d+u\b", body["title"]))
+        self.assertIsNone(re.search(r"\d+u\b", body["notes"]))
         self.assertEqual(parse_task_meta(body), (date(2026, 11, 20), {"nlp-exam": 1.0}))
+
+        # Legacy V1 completed tasks with '1u' human text still parse identically via [countdown-planner] metadata.
+        legacy_v1 = {
+            "id": "t-v1",
+            "status": "completed",
+            "title": "Introduction to NLP (1u, 1/5)",
+            "notes": 'Day: 2026-11-19 (free, 1u)\n- Introduction to NLP: 1u (1/5)\n\n[countdown-planner] {"day":"2026-11-19","units":{"nlp-exam":1.0}}',
+        }
+        self.assertEqual(parse_task_meta(legacy_v1), (date(2026, 11, 19), {"nlp-exam": 1.0}))
 
         tasks = [
             {"id": "t1", "status": "completed", **body},
+            legacy_v1,
             {"id": "t2", "status": "needsAction", **body},
             {"id": "t3", "status": "completed", "title": "Buy coffee", "notes": "personal note"},
             {"id": "t4", "status": "completed", "title": "Broken", "notes": "[countdown-planner] {bad json"},
         ]
         units, days = read_completed_progress(tasks)
-        self.assertEqual(units, {"nlp-exam": 1.0})
-        self.assertEqual(days, {date(2026, 11, 20)})
+        self.assertEqual(units, {"nlp-exam": 2.0})
+        self.assertEqual(days, {date(2026, 11, 19), date(2026, 11, 20)})
 
     def test_planner_respects_completed_units_and_days(self) -> None:
         plan = build_plan(
