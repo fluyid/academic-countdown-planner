@@ -43,7 +43,7 @@ class TestSlice4Display(unittest.TestCase):
         self.assertEqual(data["today"]["items"][0]["units"], "1 unit")
         self.assertEqual(data["today"]["items"][0]["progress"], "1/5 units")
         self.assertEqual(data["card_opacity"], DEFAULT_CARD_OPACITY)
-        self.assertIn("--glass-bg: rgba(7, 10, 20, 0.48);", html_doc)
+        self.assertIn("--glass-bg: rgba(7, 10, 20, 0.28);", html_doc)
 
         self.assertNotIn("T-minus", html_doc)
         self.assertIsNone(re.search(r"\bT-\d+", html_doc))
@@ -182,12 +182,12 @@ class TestSlice4Display(unittest.TestCase):
         body_html = html_doc.split("<body>", 1)[1].split("<script", 1)[0]
         self.assertIsNone(re.search(r"\d+u\b", body_html))
 
-        # Config without display section defaults cleanly to 0.48.
+        # Config without display section defaults cleanly to 0.28.
         cfg_no_display = copy.deepcopy(self.config)
         cfg_no_display.pop("display", None)
         default_data = build_display_data(plan, cfg_no_display)
-        self.assertEqual(default_data["card_opacity"], 0.48)
-        self.assertIn("--glass-bg: rgba(7, 10, 20, 0.48);", render_display_html(default_data))
+        self.assertEqual(default_data["card_opacity"], 0.28)
+        self.assertIn("--glass-bg: rgba(7, 10, 20, 0.28);", render_display_html(default_data))
 
     def test_write_display_outputs_ephemeral_html_and_json(self) -> None:
         plan = build_plan(self.config, [], start_date=date(2026, 11, 20))

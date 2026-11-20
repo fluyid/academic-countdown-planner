@@ -12,7 +12,7 @@ from src.planner.formatter import format_unit_ratio, format_units
 from src.planner.models import Allocation, DayPlan, EPS, StudyPlan, TargetSummary
 
 MAX_MILESTONES = 6
-DEFAULT_CARD_OPACITY = 0.48
+DEFAULT_CARD_OPACITY = 0.28
 MIN_CARD_OPACITY = 0.2
 MAX_CARD_OPACITY = 0.95
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
