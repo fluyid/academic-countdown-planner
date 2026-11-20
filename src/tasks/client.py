@@ -55,5 +55,9 @@ def update_task(service: Any, tasklist_id: str, task_id: str, body: dict[str, An
     return service.tasks().patch(tasklist=tasklist_id, task=task_id, body=body).execute()
 
 
+def complete_task(service: Any, tasklist_id: str, task_id: str) -> dict[str, Any]:
+    return update_task(service, tasklist_id, task_id, {"status": "completed"})
+
+
 def delete_task(service: Any, tasklist_id: str, task_id: str) -> None:
     service.tasks().delete(tasklist=tasklist_id, task=task_id).execute()

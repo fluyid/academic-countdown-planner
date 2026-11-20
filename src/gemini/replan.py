@@ -1,0 +1,168 @@
+"""End-to-end plain-language replanning: Gemini parse -> pure-Python apply/replan/sync/refresh -> Gemini explain."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date
+from pathlib import Path
+from typing import Any, Callable
+
+from src.calendar_client import CONFIG_PATH, create_calendar_event, get_calendar_service, get_events_in_window
+from src.gemini.actions import AddEventAction, ParsedAction, TickTaskAction, UnclearAction, parse_user_action
+from src.gemini.client import generate_content
+from src.gemini.explain import explain_replan
+from src.planner import StudyPlan, build_plan, load_config, plan_window
+from src.tasks import (
+    SyncResult,
+    complete_task,
+    get_or_create_tasklist,
+    get_tasks_service,
+    list_tasks,
+    read_completed_progress,
+    sync_plan_to_tasks,
+)
+from src.wallpaper import RefreshResult, refresh_screen
+
+
+@dataclass
+class ReplanResult:
+    action: ParsedAction
+    action_summary: str
+    ticked_task: dict[str, str] | None
+    created_event: dict[str, Any] | None
+    sync_result: SyncResult | None
+    refresh_result: RefreshResult | None
+    before_plan: StudyPlan
+    after_plan: StudyPlan
+    explanation: str
+
+
+def _format_event_summary(action: AddEventAction, created: dict[str, Any]) -> str:
+    cal_name = created.get("_calendar_name") or action.calendar
+    if action.all_day:
+        when = (
+            f"{action.start_date.isoformat()} to {action.end_date.isoformat()}"
+            if action.end_date > action.start_date
+            else action.start_date.isoformat()
+        )
+        return f"Added all-day event '{action.summary}' on {when} to calendar '{cal_name}'."
+    return (
+        f"Added event '{action.summary}' on {action.start_date.isoformat()} "
+        f"{action.start_time}-{action.end_time} to calendar '{cal_name}'."
+    )
+
+
+def replan_from_text(
+    utterance: str,
+    *,
+    config_path: Path = CONFIG_PATH,
+    list_name: str | None = None,
+    today: date | None = None,
+    background: str | Path | None = None,
+    apply_lock_screen: bool = True,
+    calendar_service: Any = None,
+    tasks_service: Any = None,
+    call_gemini: Callable[..., str] = generate_content,
+    refresh_fn: Callable[..., RefreshResult] = refresh_screen,
+) -> ReplanResult:
+    config = load_config(config_path)
+    ref_day = today or date.today()
+    start, end = plan_window(config, start_date=ref_day)
+    target_list = list_name or config.get("tasks", {}).get("list_name", "Countdown Planner (Test)")
+
+    cal_svc = get_calendar_service(calendar_service)
+    task_svc = get_tasks_service(tasks_service)
+    tasklist_id = get_or_create_tasklist(task_svc, target_list)
+
+    events_before = get_events_in_window(start, end, config_path=config_path, service=cal_svc)
+    tasks_before = list_tasks(task_svc, tasklist_id)
+    done_units_before, done_days_before = read_completed_progress(tasks_before)
+    before_plan = build_plan(
+        config,
+        events_before,
+        start_date=start,
+        completed_units=done_units_before,
+        completed_days=done_days_before,
+    )
+
+    open_tasks = [t for t in tasks_before if t.get("status") != "completed" and t.get("id")]
+    action = parse_user_action(
+        utterance,
+        today=ref_day,
+        calendars=config.get("calendars", {}),
+        open_tasks=open_tasks,
+        call_gemini=call_gemini,
+    )
+
+    if isinstance(action, UnclearAction):
+        return ReplanResult(
+            action=action,
+            action_summary=f"No changes made: {action.reason}",
+            ticked_task=None,
+            created_event=None,
+            sync_result=None,
+            refresh_result=None,
+            before_plan=before_plan,
+            after_plan=before_plan,
+            explanation=action.reason,
+        )
+
+    created_event: dict[str, Any] | None = None
+    ticked_task: dict[str, str] | None = None
+
+    if isinstance(action, AddEventAction):
+        created_event = create_calendar_event(
+            action.summary,
+            action.start_date,
+            end_date=action.end_date,
+            all_day=action.all_day,
+            start_time=action.start_time,
+            end_time=action.end_time,
+            calendar_role=action.calendar,
+            config_path=config_path,
+            service=cal_svc,
+        )
+        action_summary = _format_event_summary(action, created_event)
+    elif isinstance(action, TickTaskAction):
+        complete_task(task_svc, tasklist_id, action.task_id)
+        ticked_task = {"id": action.task_id, "title": action.task_title, "due": action.task_due}
+        due_part = f" (due {action.task_due})" if action.task_due else ""
+        action_summary = f"Ticked task: '{action.task_title}'{due_part}."
+    else:  # pragma: no cover - exhaustive guard
+        raise ValueError(f"Unsupported action: {action!r}")
+
+    # Re-read truth from Calendar + Tasks and recompute strictly in pure Python.
+    events_after = get_events_in_window(start, end, config_path=config_path, service=cal_svc)
+    tasks_after = list_tasks(task_svc, tasklist_id)
+    done_units_after, done_days_after = read_completed_progress(tasks_after)
+    after_plan = build_plan(
+        config,
+        events_after,
+        start_date=start,
+        completed_units=done_units_after,
+        completed_days=done_days_after,
+    )
+
+    sync_res = sync_plan_to_tasks(task_svc, tasklist_id, target_list, after_plan, existing_tasks=tasks_after)
+    refresh_res = refresh_fn(
+        after_plan,
+        config,
+        today=ref_day,
+        completed_units=done_units_after,
+        completed_days=done_days_after,
+        background=background,
+        apply=apply_lock_screen,
+    )
+    explanation = explain_replan(action_summary, before_plan, after_plan, today=ref_day, call_gemini=call_gemini)
+
+    return ReplanResult(
+        action=action,
+        action_summary=action_summary,
+        ticked_task=ticked_task,
+        created_event=created_event,
+        sync_result=sync_res,
+        refresh_result=refresh_res,
+        before_plan=before_plan,
+        after_plan=after_plan,
+        explanation=explanation,
+    )

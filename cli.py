@@ -73,6 +73,11 @@ def main() -> int:
         default=DEFAULT_POLL_MINUTES,
         help="On-change check interval in minutes (0 to disable, default: 30).",
     )
+    say = sub.add_parser("say", help="Replan from plain language via Gemini (add Calendar event or tick a Task).")
+    say.add_argument("text", nargs="+", help='Plain-language input, e.g. "I have plans on the 28th".')
+    say.add_argument("--list", dest="list_name", help="Override Google Tasks list name from config/targets.json.")
+    say.add_argument("--background", help="Optional background image path or URL.")
+    say.add_argument("--skip-apply", action="store_true", help="Capture screenshot without changing OS lock screen.")
     args = parser.parse_args()
 
     try:
@@ -144,6 +149,32 @@ def main() -> int:
                 print(install_schedule(morning_time=args.time, poll_minutes=args.poll_minutes))
             elif args.action == "uninstall":
                 print(uninstall_schedule())
+        elif args.command == "say":
+            from src.gemini import replan_from_text
+
+            res = replan_from_text(
+                " ".join(args.text),
+                list_name=args.list_name,
+                background=args.background,
+                apply_lock_screen=not args.skip_apply,
+            )
+            print(res.action_summary)
+            if res.ticked_task:
+                due = f", due {res.ticked_task['due']}" if res.ticked_task.get("due") else ""
+                print(f"Confirmed task ticked: {res.ticked_task['title']} (id={res.ticked_task['id']}{due})")
+            if res.sync_result is not None:
+                print()
+                print(res.explanation)
+                print()
+                print(format_sync_summary(res.sync_result))
+                if res.refresh_result is not None:
+                    w, h = res.refresh_result.resolution
+                    state = (
+                        f"applied -> {res.refresh_result.applied_path}"
+                        if res.refresh_result.applied
+                        else "skipped (--skip-apply)"
+                    )
+                    print(f"Lock screen: {state} ({w}x{h})")
     except FileNotFoundError as exc:
         print(f"Setup required: {exc}", file=sys.stderr)
         return 1

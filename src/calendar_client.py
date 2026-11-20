@@ -36,8 +36,12 @@ def _event_sort_key(event: dict[str, Any]) -> str:
     return event.get("start", {}).get("dateTime") or f"{event.get('start', {}).get('date', '9999-12-31')}T00:00:00Z"
 
 
+def get_calendar_service(service: Any = None) -> Any:
+    return service or build("calendar", "v3", credentials=get_credentials())
+
+
 def get_upcoming_events(max_results: int = 10) -> list[dict[str, Any]]:
-    service = build("calendar", "v3", credentials=get_credentials())
+    service = get_calendar_service()
     now = datetime.now(timezone.utc).isoformat()
     merged: list[dict[str, Any]] = []
     for role, name, cid in resolve_calendars(service, load_calendar_config()):
@@ -53,7 +57,7 @@ def get_events_in_window(
     config_path: Path = CONFIG_PATH,
     service: Any = None,
 ) -> list[dict[str, Any]]:
-    service = service or build("calendar", "v3", credentials=get_credentials())
+    service = get_calendar_service(service)
     tz = datetime.now().astimezone().tzinfo
     time_min = datetime.combine(start_date, time.min, tzinfo=tz).isoformat()
     time_max = datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=tz).isoformat()
@@ -75,6 +79,50 @@ def get_events_in_window(
                 break
     merged.sort(key=_event_sort_key)
     return merged
+
+
+def create_calendar_event(
+    summary: str,
+    start_date: date,
+    *,
+    end_date: date | None = None,
+    all_day: bool = True,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    calendar_role: str = "personal",
+    config_path: Path = CONFIG_PATH,
+    service: Any = None,
+) -> dict[str, Any]:
+    svc = get_calendar_service(service)
+    resolved = resolve_calendars(svc, load_calendar_config(config_path))
+    role, cal_name, cid = next((c for c in resolved if c[0] == calendar_role), resolved[0])
+
+    if all_day:
+        inclusive_end = end_date or start_date
+        if inclusive_end < start_date:
+            raise ValueError(f"end_date ({inclusive_end}) cannot be before start_date ({start_date}).")
+        # Google Calendar all-day end.date is exclusive.
+        body: dict[str, Any] = {
+            "summary": summary.strip(),
+            "start": {"date": start_date.isoformat()},
+            "end": {"date": (inclusive_end + timedelta(days=1)).isoformat()},
+        }
+    else:
+        if not start_time or not end_time:
+            raise ValueError("Timed calendar events require both start_time and end_time (HH:MM).")
+        tz = datetime.now().astimezone().tzinfo
+        t_start = time.fromisoformat(start_time)
+        t_end = time.fromisoformat(end_time)
+        if t_end <= t_start:
+            raise ValueError(f"end_time ({end_time}) must be after start_time ({start_time}).")
+        body = {
+            "summary": summary.strip(),
+            "start": {"dateTime": datetime.combine(start_date, t_start, tzinfo=tz).isoformat()},
+            "end": {"dateTime": datetime.combine(start_date, t_end, tzinfo=tz).isoformat()},
+        }
+
+    created = svc.events().insert(calendarId=cid, body=body).execute()
+    return {**created, "_calendar_role": role, "_calendar_name": cal_name}
 
 
 def format_event_line(event: dict[str, Any]) -> str:

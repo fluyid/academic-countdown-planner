@@ -95,7 +95,7 @@ Build a local, zero-hosting **Python academic countdown & study-planner app** fo
 - **Slices 1–5 cost $0:** Google Calendar API and Google Tasks API are completely free (no billing account needed, never charged).
 - **Slice 6 Gemini guardrails (enforced in code):**
   - **Never** call Gemini from scheduled morning refreshes, display rebuilds, or retry loops—only on explicit user plain-language commands.
-  - Default to the cheapest Flash model (`gemini-2.5-flash-lite` / `gemini-2.5-flash`) with tight `max_output_tokens`.
+  - Default to the cheapest Flash model (`gemini-3.5-flash-lite` / `gemini-3.5-flash`) with tight `max_output_tokens`.
   - Enforce a hard local daily request cap in code (e.g., max 25 calls/day) and fail fast on errors (no blind retry storms).
   - Keep the Gemini API key outside the repo (`~/.config/countdown-planner/.env`) alongside `credentials.json` and `token.json`.
 
@@ -112,8 +112,8 @@ Build a local, zero-hosting **Python academic countdown & study-planner app** fo
 | **3** | **Tasks** | Plan appears in Google Tasks test list—one task per day with due dates. | Done |
 | **4** | **Display Page** | Single HTML page shows countdown + today's task over placeholder background, respecting OS safe zones. | Done |
 | **5** | **Lock Screen & Wallpaper** | Scheduled screenshot becomes lock screen on Mac, then Windows; Plash & Lively show live page. | Done |
-| **6** | **Gemini Replan** | Plain-language input (e.g., *"I have plans on the 28th"*) adds event, reshuffles units, ticks/echoes tasks, explains plan, refreshes screen. | Next |
-| **7** | **Polish & Feature Freeze** | Gemini-made cozy background in place, every word proofread, layout checked on both screens. | Pending |
+| **6** | **Gemini Replan** | Plain-language input (e.g., *"I have plans on the 28th"*) adds event, reshuffles units, ticks/echoes tasks, explains plan, refreshes screen. | Done |
+| **7** | **Polish & Feature Freeze** | Gemini-made cozy background in place, every word proofread, layout checked on both screens. | Next |
 
 ---
 
