@@ -109,8 +109,8 @@ Build a local, zero-hosting **Python academic countdown & study-planner app** fo
 | :---: | :--- | :--- | :---: |
 | **1** | **Login & Calendar Read** | Single OAuth login (Calendar + Tasks) prints next 10 events across `"Kai Nath"` and `"IU"`. | Done |
 | **2** | **Planner** | Pure Python study plan prints as plain text and every unit lands on a day with capacity. | Done |
-| **3** | **Tasks** | Plan appears in Google Tasks test list—one task per day with due dates. | Next |
-| **4** | **Display Page** | Single HTML page shows countdown + today's task over placeholder background, respecting OS safe zones. | Pending |
+| **3** | **Tasks** | Plan appears in Google Tasks test list—one task per day with due dates. | Done |
+| **4** | **Display Page** | Single HTML page shows countdown + today's task over placeholder background, respecting OS safe zones. | Next |
 | **5** | **Lock Screen & Wallpaper** | Scheduled screenshot becomes lock screen on Mac, then Windows; Plash & Lively show live page. | Pending |
 | **6** | **Gemini Replan** | Plain-language input (e.g., *"I have plans on the 28th"*) adds event, reshuffles units, ticks/echoes tasks, explains plan, refreshes screen. | Pending |
 | **7** | **Polish & Feature Freeze** | Gemini-made cozy background in place, every word proofread, layout checked on both screens. | Pending |

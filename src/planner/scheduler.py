@@ -16,10 +16,14 @@ def build_plan(
     config: dict[str, Any],
     events: list[dict[str, Any]],
     start_date: date | None = None,
+    completed_units: dict[str, float] | None = None,
+    completed_days: set[date] | None = None,
 ) -> StudyPlan:
     start, end = plan_window(config, start_date)
     days = classify_days(start, end, events, config)
-    remaining_cap = [d.capacity for d in days]
+    done_units = completed_units or {}
+    done_days = completed_days or set()
+    remaining_cap = [0.0 if d.day in done_days else d.capacity for d in days]
 
     targets = list(enumerate(config.get("targets", [])))
     by_deadline = lambda p: (date.fromisoformat(p[1]["date"]) if p[1].get("date") else date.max, p[0])
@@ -33,7 +37,8 @@ def build_plan(
     def allocate_target(t: dict[str, Any], required: float, strict_before: bool) -> None:
         tid, name, prio = t["id"], t["name"], int(t.get("priority", 1))
         deadline = date.fromisoformat(t["date"]) if t.get("date") else None
-        done, needed = 0.0, required
+        prior = round(max(0.0, float(done_units.get(tid, 0.0))), 4)
+        done, needed = prior, round(max(0.0, required - prior), 4)
         for i, day_plan in enumerate(days):
             if needed <= EPS:
                 break
@@ -63,8 +68,8 @@ def build_plan(
     undated = [t for _, t in assignments if not t.get("date")]
     if undated:
         req_map = {t["id"]: float(t["units"]) if t.get("units") is not None else DEFAULT_ASSIGNMENT_UNITS for t in undated}
-        done_map = {t["id"]: 0.0 for t in undated}
-        needed_map = dict(req_map)
+        done_map = {t["id"]: round(max(0.0, float(done_units.get(t["id"], 0.0))), 4) for t in undated}
+        needed_map = {tid: round(max(0.0, req_map[tid] - done_map[tid]), 4) for tid in req_map}
         cursor = 0
         for i, day_plan in enumerate(days):
             while remaining_cap[i] > EPS:

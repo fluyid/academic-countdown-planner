@@ -3,6 +3,9 @@
     "personal": "Kai Nath",
     "university": "IU"
   },
+  "tasks": {
+    "list_name": "Countdown Planner (Test)"
+  },
   "window": {
     "anchor_label": "Intro to NLP Exam",
     "anchor_date": "2026-12-14"

@@ -7,6 +7,14 @@ import sys
 
 from src.calendar_client import format_event_line, get_events_in_window, get_upcoming_events
 from src.planner import build_plan, format_plan, load_config, plan_window
+from src.tasks import (
+    format_sync_summary,
+    get_or_create_tasklist,
+    get_tasks_service,
+    list_tasks,
+    read_completed_progress,
+    sync_plan_to_tasks,
+)
 
 
 def main() -> int:
@@ -15,6 +23,8 @@ def main() -> int:
     cal = sub.add_parser("check-calendar", help="Print the next N upcoming Calendar events.")
     cal.add_argument("-n", "--count", type=int, default=10)
     sub.add_parser("plan", help="Print the pure-Python study plan through the exam window.")
+    sync = sub.add_parser("sync-tasks", help="Sync the computed study plan to Google Tasks (one task per study day).")
+    sync.add_argument("--list", dest="list_name", help="Override Google Tasks list name from config/targets.json.")
     args = parser.parse_args()
 
     try:
@@ -27,6 +37,26 @@ def main() -> int:
             start, end = plan_window(config)
             events = get_events_in_window(start, end)
             print(format_plan(build_plan(config, events, start_date=start)))
+        elif args.command == "sync-tasks":
+            config = load_config()
+            list_name = args.list_name or config.get("tasks", {}).get("list_name", "Countdown Planner (Test)")
+            start, end = plan_window(config)
+            events = get_events_in_window(start, end)
+            service = get_tasks_service()
+            tasklist_id = get_or_create_tasklist(service, list_name)
+            existing = list_tasks(service, tasklist_id)
+            completed_units, completed_days = read_completed_progress(existing)
+            plan = build_plan(
+                config,
+                events,
+                start_date=start,
+                completed_units=completed_units,
+                completed_days=completed_days,
+            )
+            result = sync_plan_to_tasks(service, tasklist_id, list_name, plan, existing_tasks=existing)
+            print(format_sync_summary(result))
+            print()
+            print(format_plan(plan))
     except FileNotFoundError as exc:
         print(f"Setup required: {exc}", file=sys.stderr)
         return 1
