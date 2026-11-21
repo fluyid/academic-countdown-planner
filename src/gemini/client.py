@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 from datetime import date
@@ -16,6 +17,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
 ALLOWED_MODELS = ("gemini-3.5-flash-lite", "gemini-3.5-flash")
+ALLOWED_AUDIO_MIME_TYPES = ("audio/wav",)
+MAX_AUDIO_BYTES = 2 * 1024 * 1024
 DEFAULT_DAILY_CAP = 25
 MAX_OUTPUT_TOKENS_CAP = 512
 DEFAULT_TIMEOUT_SECONDS = 20
@@ -97,6 +100,8 @@ def generate_content(
     *,
     system: str | None = None,
     response_schema: dict[str, Any] | None = None,
+    audio_bytes: bytes | None = None,
+    audio_mime_type: str = "audio/wav",
     max_output_tokens: int = 256,
     temperature: float = 0.0,
     model: str = DEFAULT_MODEL,
@@ -112,6 +117,17 @@ def generate_content(
         raise ValueError(f"Model {model!r} is not allowed; use one of {ALLOWED_MODELS}.")
     if not (1 <= max_output_tokens <= MAX_OUTPUT_TOKENS_CAP):
         raise ValueError(f"max_output_tokens must be in 1..{MAX_OUTPUT_TOKENS_CAP} (got {max_output_tokens}).")
+    if audio_bytes is not None:
+        if audio_mime_type not in ALLOWED_AUDIO_MIME_TYPES:
+            raise ValueError(
+                f"Audio MIME type {audio_mime_type!r} is not allowed; use one of {ALLOWED_AUDIO_MIME_TYPES}."
+            )
+        if not isinstance(audio_bytes, (bytes, bytearray)) or len(audio_bytes) == 0:
+            raise ValueError("Audio payload must be non-empty bytes.")
+        if len(audio_bytes) > MAX_AUDIO_BYTES:
+            raise ValueError(
+                f"Audio payload too large ({len(audio_bytes)} bytes; max {MAX_AUDIO_BYTES} bytes)."
+            )
 
     key = (api_key or "").strip() or load_api_key(env_path=env_path)
     # Increment cap before network I/O so failed/timed-out requests cannot bypass the daily limit.
@@ -127,8 +143,19 @@ def generate_content(
         gen_config["responseMimeType"] = "application/json"
         gen_config["responseSchema"] = response_schema
 
+    user_parts: list[dict[str, Any]] = [{"text": prompt}]
+    if audio_bytes is not None:
+        user_parts.append(
+            {
+                "inlineData": {
+                    "mimeType": audio_mime_type,
+                    "data": base64.b64encode(bytes(audio_bytes)).decode("ascii"),
+                }
+            }
+        )
+
     payload: dict[str, Any] = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "contents": [{"role": "user", "parts": user_parts}],
         "generationConfig": gen_config,
     }
     if system:

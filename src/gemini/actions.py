@@ -142,6 +142,41 @@ def validate_action_payload(raw: dict[str, Any], open_tasks: list[dict[str, Any]
     raise ValueError(f"Unknown action from Gemini: {kind!r}")
 
 
+def _context_block(today: date, calendars: dict[str, str], open_tasks: list[dict[str, Any]]) -> str:
+    return (
+        f"TODAY: {today.isoformat()} ({today.strftime('%A')})\n"
+        f"CALENDARS: personal={calendars.get('personal', 'Kai Nath')}, university={calendars.get('university', 'IU')}\n"
+        f"OPEN TASKS:\n{_format_open_tasks(open_tasks)}"
+    )
+
+
+def _request_action(
+    prompt: str,
+    *,
+    open_tasks: list[dict[str, Any]],
+    call_gemini: Callable[..., str],
+    audio_bytes: bytes | None = None,
+    audio_mime_type: str = "audio/wav",
+) -> ParsedAction:
+    kwargs: dict[str, Any] = {
+        "system": _SYSTEM_PROMPT,
+        "response_schema": ACTION_SCHEMA,
+        "max_output_tokens": PARSE_MAX_OUTPUT_TOKENS,
+        "temperature": 0.0,
+    }
+    if audio_bytes is not None:
+        kwargs["audio_bytes"] = audio_bytes
+        kwargs["audio_mime_type"] = audio_mime_type
+    raw_text = call_gemini(prompt, **kwargs)
+    try:
+        parsed = json.loads(raw_text)
+    except ValueError as exc:
+        raise RuntimeError(f"Gemini returned invalid JSON for action parsing: {raw_text[:200]}") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Gemini action response must be a JSON object.")
+    return validate_action_payload(parsed, open_tasks)
+
+
 def parse_user_action(
     utterance: str,
     *,
@@ -154,23 +189,30 @@ def parse_user_action(
     if not cleaned:
         raise ValueError("Please provide a plain-language instruction.")
 
+    prompt = f"{_context_block(today, calendars, open_tasks)}\n\nUSER INPUT: {cleaned}"
+    return _request_action(prompt, open_tasks=open_tasks, call_gemini=call_gemini)
+
+
+def parse_audio_action(
+    audio_bytes: bytes,
+    *,
+    today: date,
+    calendars: dict[str, str],
+    open_tasks: list[dict[str, Any]],
+    audio_mime_type: str = "audio/wav",
+    call_gemini: Callable[..., str] = generate_content,
+) -> ParsedAction:
+    if not audio_bytes:
+        raise ValueError("Audio clip is empty.")
+
     prompt = (
-        f"TODAY: {today.isoformat()} ({today.strftime('%A')})\n"
-        f"CALENDARS: personal={calendars.get('personal', 'Kai Nath')}, university={calendars.get('university', 'IU')}\n"
-        f"OPEN TASKS:\n{_format_open_tasks(open_tasks)}\n\n"
-        f"USER INPUT: {cleaned}"
+        f"{_context_block(today, calendars, open_tasks)}\n\n"
+        "USER INPUT: Listen to the attached voice clip and map it to one structured action."
     )
-    raw_text = call_gemini(
+    return _request_action(
         prompt,
-        system=_SYSTEM_PROMPT,
-        response_schema=ACTION_SCHEMA,
-        max_output_tokens=PARSE_MAX_OUTPUT_TOKENS,
-        temperature=0.0,
+        open_tasks=open_tasks,
+        call_gemini=call_gemini,
+        audio_bytes=audio_bytes,
+        audio_mime_type=audio_mime_type,
     )
-    try:
-        parsed = json.loads(raw_text)
-    except ValueError as exc:
-        raise RuntimeError(f"Gemini returned invalid JSON for action parsing: {raw_text[:200]}") from exc
-    if not isinstance(parsed, dict):
-        raise RuntimeError("Gemini action response must be a JSON object.")
-    return validate_action_payload(parsed, open_tasks)

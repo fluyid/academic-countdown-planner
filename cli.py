@@ -45,6 +45,26 @@ def _load_live_state(config: dict, list_name: str):
     return service, tasklist_id, existing, completed_units, completed_days, plan
 
 
+def _print_replan_result(res) -> None:
+    print(res.action_summary)
+    if res.ticked_task:
+        due = f", due {res.ticked_task['due']}" if res.ticked_task.get("due") else ""
+        print(f"Confirmed task ticked: {res.ticked_task['title']} (id={res.ticked_task['id']}{due})")
+    if res.sync_result is not None:
+        print()
+        print(res.explanation)
+        print()
+        print(format_sync_summary(res.sync_result))
+        if res.refresh_result is not None:
+            w, h = res.refresh_result.resolution
+            state = (
+                f"applied -> {res.refresh_result.applied_path}"
+                if res.refresh_result.applied
+                else "skipped (--skip-apply)"
+            )
+            print(f"Lock screen: {state} ({w}x{h})")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="countdown-planner")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -78,6 +98,18 @@ def main() -> int:
     say.add_argument("--list", dest="list_name", help="Override Google Tasks list name from config/targets.json.")
     say.add_argument("--background", help="Optional background image path or URL (defaults to assets/background.jpg).")
     say.add_argument("--skip-apply", action="store_true", help="Capture screenshot without changing OS lock screen.")
+    voice = sub.add_parser("voice", help="Replan from a short voice clip via Gemini (mic or local .wav file).")
+    voice.add_argument("--file", dest="audio_file", help="Use a local .wav file instead of recording from the mic.")
+    voice.add_argument(
+        "--max-seconds",
+        type=float,
+        default=10.0,
+        help="Maximum mic recording duration in seconds (default: 10, clamped <= 15).",
+    )
+    voice.add_argument("--list", dest="list_name", help="Override Google Tasks list name from config/targets.json.")
+    voice.add_argument("--background", help="Optional background image path or URL (defaults to assets/background.jpg).")
+    voice.add_argument("--skip-apply", action="store_true", help="Capture screenshot without changing OS lock screen.")
+    voice.add_argument("--speak", action="store_true", help="Read back the replan explanation via $0 local OS TTS.")
     args = parser.parse_args()
 
     try:
@@ -158,23 +190,27 @@ def main() -> int:
                 background=args.background,
                 apply_lock_screen=not args.skip_apply,
             )
-            print(res.action_summary)
-            if res.ticked_task:
-                due = f", due {res.ticked_task['due']}" if res.ticked_task.get("due") else ""
-                print(f"Confirmed task ticked: {res.ticked_task['title']} (id={res.ticked_task['id']}{due})")
-            if res.sync_result is not None:
-                print()
-                print(res.explanation)
-                print()
-                print(format_sync_summary(res.sync_result))
-                if res.refresh_result is not None:
-                    w, h = res.refresh_result.resolution
-                    state = (
-                        f"applied -> {res.refresh_result.applied_path}"
-                        if res.refresh_result.applied
-                        else "skipped (--skip-apply)"
-                    )
-                    print(f"Lock screen: {state} ({w}x{h})")
+            _print_replan_result(res)
+        elif args.command == "voice":
+            from src.gemini import replan_from_audio
+            from src.voice import clamp_max_seconds, load_wav_file, record_voice_clip, speak_text
+
+            if args.audio_file:
+                wav_bytes = load_wav_file(args.audio_file)
+            else:
+                capped = clamp_max_seconds(args.max_seconds)
+                print(f"Listening (up to {capped:g}s, auto-stops on silence)...", flush=True)
+                wav_bytes = record_voice_clip(max_seconds=capped)
+
+            res = replan_from_audio(
+                wav_bytes,
+                list_name=args.list_name,
+                background=args.background,
+                apply_lock_screen=not args.skip_apply,
+            )
+            _print_replan_result(res)
+            if args.speak and res.explanation:
+                speak_text(res.explanation)
     except FileNotFoundError as exc:
         print(f"Setup required: {exc}", file=sys.stderr)
         return 1
