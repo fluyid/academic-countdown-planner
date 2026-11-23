@@ -114,6 +114,29 @@ def main() -> int:
         action="store_true",
         help="Read back the replan explanation via $0 Edge neural TTS (falls back to local OS TTS).",
     )
+    listen = sub.add_parser(
+        "listen",
+        help="Offline 'hey gemini' wake-word listener ($0, 0 Gemini calls while idle) triggering voice replan.",
+    )
+    listen.add_argument("--wake-phrase", default="hey gemini", help='Offline wake phrase (default: "hey gemini").')
+    listen.add_argument("--model-dir", help="Optional local Vosk model directory (defaults to ~/.config/countdown-planner/).")
+    listen.add_argument("--no-download", action="store_true", help="Do not auto-download the small offline Vosk model if missing.")
+    listen.add_argument(
+        "--max-seconds",
+        type=float,
+        default=10.0,
+        help="Maximum command recording duration after wake in seconds (default: 10, clamped <= 15).",
+    )
+    listen.add_argument("--cooldown", type=float, default=3.0, help="Seconds to wait after handling a command (default: 3).")
+    listen.add_argument("--once", action="store_true", help="Exit after handling a single wake-word activation.")
+    listen.add_argument("--list", dest="list_name", help="Override Google Tasks list name from config/targets.json.")
+    listen.add_argument("--background", help="Optional background image path or URL (defaults to assets/background.jpg).")
+    listen.add_argument("--skip-apply", action="store_true", help="Capture screenshot without changing OS lock screen.")
+    listen.add_argument(
+        "--speak",
+        action="store_true",
+        help="Read back each replan explanation via $0 Edge neural TTS (falls back to local OS TTS).",
+    )
     args = parser.parse_args()
 
     try:
@@ -215,6 +238,26 @@ def main() -> int:
             _print_replan_result(res)
             if args.speak and res.explanation:
                 speak_text(res.explanation)
+        elif args.command == "listen":
+            from src.gemini import replan_from_audio
+            from src.voice import run_wake_loop
+
+            return run_wake_loop(
+                wake_phrase=args.wake_phrase,
+                model_dir=args.model_dir,
+                auto_download=not args.no_download,
+                max_seconds=args.max_seconds,
+                cooldown_seconds=args.cooldown,
+                once=args.once,
+                speak=args.speak,
+                replan_fn=lambda wav_bytes: replan_from_audio(
+                    wav_bytes,
+                    list_name=args.list_name,
+                    background=args.background,
+                    apply_lock_screen=not args.skip_apply,
+                ),
+                on_result=_print_replan_result,
+            )
     except FileNotFoundError as exc:
         print(f"Setup required: {exc}", file=sys.stderr)
         return 1
