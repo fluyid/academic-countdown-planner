@@ -30,9 +30,12 @@ from src.gemini import (
 from src.planner import build_plan, load_config
 from src.tasks import get_or_create_tasklist, sync_plan_to_tasks
 from src.voice import (
+    DEFAULT_EDGE_VOICE,
     HARD_MAX_SECONDS,
     SAMPLE_RATE,
+    TTS_AUDIO_ENV_VAR,
     TTS_ENV_VAR,
+    build_audio_play_command,
     build_tts_command,
     clamp_max_seconds,
     load_wav_file,
@@ -347,20 +350,52 @@ class TestV2Slice3Voice(unittest.TestCase):
         with self.assertRaises(NotImplementedError):
             build_tts_command("hello", platform="linux")
 
-        # speak_text invokes run_fn and surfaces non-zero exit codes.
+        # Audio playback commands for edge-tts MP3 (Windows MediaPlayer via env URI + macOS afplay argv).
+        sample_mp3 = Path("tmp_clip; $(calc).mp3")
+        win_play_cmd, win_play_env = build_audio_play_command(sample_mp3, platform="win32")
+        self.assertEqual(win_play_cmd[0], "powershell.exe")
+        self.assertIn(f"$env:{TTS_AUDIO_ENV_VAR}", win_play_cmd[-1])
+        self.assertNotIn("calc", win_play_cmd[-1])
+        self.assertTrue(win_play_env[TTS_AUDIO_ENV_VAR].startswith("file:///"))
+
+        mac_play_cmd, mac_play_env = build_audio_play_command(sample_mp3, platform="darwin")
+        self.assertEqual(mac_play_cmd[0], "afplay")
+        self.assertIsNone(mac_play_env)
+
+        # speak_text uses en-US-AriaNeural via edge-tts, plays temp MP3, and deletes temp file afterwards.
+        created_paths: list[Path] = []
         seen: list[tuple[list[str], dict[str, str] | None]] = []
+
+        def fake_synth(text: str, out_path: Path, *, voice: str) -> None:
+            self.assertEqual(voice, DEFAULT_EDGE_VOICE)
+            out_path.write_bytes(b"ID3-fake-mp3")
+            created_paths.append(out_path)
 
         def ok_run(cmd, env=None, **kw):
             seen.append((cmd, env))
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
-        speak_text("All set.", platform="win32", run_fn=ok_run)
-        self.assertEqual(seen[0][1][TTS_ENV_VAR], "All set.")
+        speak_text("All set.", platform="win32", synthesize_fn=fake_synth, run_fn=ok_run)
+        self.assertEqual(len(created_paths), 1)
+        self.assertFalse(created_paths[0].exists())
+        self.assertIn(TTS_AUDIO_ENV_VAR, seen[0][1])
+
+        speak_text("All set.", platform="darwin", synthesize_fn=fake_synth, run_fn=ok_run)
+        self.assertEqual(seen[1][0][0], "afplay")
+        self.assertFalse(created_paths[1].exists())
+
+        # If edge-tts fails (e.g. offline), speak_text falls back cleanly to local OS TTS.
+        def failing_synth(*args, **kwargs):
+            raise RuntimeError("offline")
+
+        speak_text("Fallback test.", platform="win32", synthesize_fn=failing_synth, run_fn=ok_run)
+        self.assertEqual(seen[2][1][TTS_ENV_VAR], "Fallback test.")
 
         with self.assertRaisesRegex(RuntimeError, "Local OS TTS failed"):
             speak_text(
                 "All set.",
                 platform="darwin",
+                synthesize_fn=failing_synth,
                 run_fn=lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "audio unavailable"),
             )
 

@@ -109,7 +109,11 @@ def main() -> int:
     voice.add_argument("--list", dest="list_name", help="Override Google Tasks list name from config/targets.json.")
     voice.add_argument("--background", help="Optional background image path or URL (defaults to assets/background.jpg).")
     voice.add_argument("--skip-apply", action="store_true", help="Capture screenshot without changing OS lock screen.")
-    voice.add_argument("--speak", action="store_true", help="Read back the replan explanation via $0 local OS TTS.")
+    voice.add_argument(
+        "--speak",
+        action="store_true",
+        help="Read back the replan explanation via $0 Edge neural TTS (falls back to local OS TTS).",
+    )
     args = parser.parse_args()
 
     try:
