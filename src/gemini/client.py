@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 import requests
 
-from src.google_auth import secrets_dir
+from src.google_auth import prefer_ipv4, secrets_dir
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -164,6 +164,8 @@ def generate_content(
     # Single request, no retries — fail fast to prevent accidental billing storms.
     url = f"{API_BASE}/{model}:generateContent"
     headers = {"x-goog-api-key": key, "Content-Type": "application/json"}
+    if post_fn is None:
+        prefer_ipv4()
     try:
         resp = (post_fn or requests.post)(url, headers=headers, json=payload, timeout=timeout)
     except requests.RequestException as exc:

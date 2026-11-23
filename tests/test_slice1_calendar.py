@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import socket
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from src.calendar_client import format_event_line, load_calendar_config, resolve_calendars
-from src.google_auth import SCOPES, get_credentials, secrets_dir
+from src.google_auth import SCOPES, _ipv4_first_getaddrinfo, get_credentials, secrets_dir
 
 
 class TestSlice1(unittest.TestCase):
@@ -42,6 +44,21 @@ class TestSlice1(unittest.TestCase):
             resolve_calendars(FakeService(), {"personal": "Kai Nath", "university": "IU"}),
             [("personal", "Kai Nath", "kai@gmail.com"), ("university", "IU", "iu@group.calendar.google.com")],
         )
+
+    def test_ipv4_first_getaddrinfo_prefers_ipv4_with_ipv6_fallback(self) -> None:
+        sample = [
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2001:4860::1", 443, 0, 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("172.217.114.4", 443)),
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2001:4860::2", 443, 0, 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("172.217.113.4", 443)),
+        ]
+        with patch("src.google_auth._ORIG_GETADDRINFO", return_value=sample):
+            ordered = _ipv4_first_getaddrinfo("tasks.googleapis.com", 443)
+        self.assertEqual(
+            [item[0] for item in ordered],
+            [socket.AF_INET, socket.AF_INET, socket.AF_INET6, socket.AF_INET6],
+        )
+        self.assertEqual([item[4][0] for item in ordered[:2]], ["172.217.114.4", "172.217.113.4"])
 
 
 if __name__ == "__main__":
