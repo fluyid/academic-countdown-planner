@@ -7,14 +7,15 @@ Local, zero-hosting Python app for **Windows and Mac** that connects **Google Ca
 - **Google Tasks (Truth of Progress):** Syncs one task per study day with concrete due dates. Checking off a task on any device preserves completed progress across Windows and Mac.
 - **Pure-Python Planner (Zero LLM Arithmetic):** Deterministic scheduling across three strict priority tiers:
   1. **Priority 1 (Protected):** Exam study units (`1 unit/day`).
-  2. **Priority 2:** Required paper reading + assignment work, with a hard **40 pages/day** reading cap across all subjects combined.
+  2. **Priority 2:** Required paper reading (tracked in **papers**, e.g. `0/4 papers` and `0/3 papers`, with optional assignment work units) under a hard **40 pages/day** reading cap across all subjects combined.
   3. **Priority 3 (Drops First When Tight):** Optional paper reading (abstract + intro + note).
+  - Supports configurable **`blocked_date_ranges`** (e.g., exam-period blackouts) so study plans never overflow into exam weeks.
 - **Single-Page Display (One Design -> Two Surfaces):** Ephemeral HTML (`output/index.html`) over a Gemini-generated cyberpunk night-city background (`assets/background.jpg`) with translucent glassmorphic HUD cards (`card_opacity`, bundled `Cyberway Riders`, `Orbitron`, and `Rajdhani` fonts), Windows/macOS lock-screen safe zones, concrete dates (no `T-minus` labels), and 5 combined milestones.
-  - **Live desktop wallpaper** (ticking seconds): **Lively Wallpaper** / **Wallpaper Engine** on Windows, **Plash** on Mac.
+  - **Live desktop wallpaper** (ticking seconds + auto-reload): **Lively Wallpaper** (standard & Microsoft Store) / **Wallpaper Engine** on Windows, **Plash** on Mac — reloads automatically on plan updates via CLI reload + `output/plan_version.js`.
   - **Static lock screen** (days left + today's task): headless Chromium screenshot (`output/lockscreen.png`) refreshed every morning and on changes.
-- **Strictly Scoped Gemini Layer (`say` / `voice` / `listen`):** Two jobs only — (1) map text or a short voice clip to a Calendar event or an exact open Google Task tick (echoing the exact task ticked), and (2) explain the pure-Python recomputed diff.
-  - **Voice + Offline Wake Word:** Push-to-talk (`cli.py voice`) or always-on offline **`"Hey Gemini"`** (`cli.py listen` via grammar-constrained local `vosk` — **\$0 and 0 Gemini calls while idle**), with natural **\$0 neural readout** via `edge-tts` (`en-US-AriaNeural` on Windows & Mac, automatic offline OS TTS fallback).
-  - **Zero-Accidental-Billing Guardrails:** Never called from scheduled refreshes; Flash-only (`gemini-3.5-flash-lite` default), `thinkingLevel: "MINIMAL"`, `max_output_tokens <= 512`, `<= 15s` / `<= 2 MB` audio cap, hard **25 calls/day** local cap (`gemini_usage.json`), and zero retries.
+- **Strictly Scoped Gemini Layer (`say` / `voice` / `listen`):** Two jobs only — (1) map text or a short voice clip (echoing verbatim `Heard: "..."`) into a Calendar event, an exact open Google Task tick, a partial/custom **unit or paper progress log**, or one or more **target due-date updates** (synced to `config/targets.json` and your university calendar), and (2) explain the pure-Python recomputed diff.
+  - **Voice + Offline Wake Word:** Push-to-talk (`cli.py voice`) or always-on offline **`"Hey Gemini"`** (`cli.py listen` via grammar-constrained local `vosk` — **\$0 and 0 Gemini calls while idle**, silent wake by default with optional `--chime`), with natural **\$0 neural readout** via `edge-tts` (`en-US-AriaNeural` on Windows & Mac, automatic offline OS TTS fallback).
+  - **Zero-Accidental-Billing Guardrails:** Never called from scheduled refreshes; Flash-only (`gemini-3.5-flash-lite` for text/explanations, `gemini-3.5-flash` for voice transcription), `thinkingLevel: "MINIMAL"`, `max_output_tokens <= 512`, `<= 15s` / `<= 2 MB` audio cap, hard **25 calls/day** local cap (`gemini_usage.json`), and zero retries.
 
 ---
 
@@ -69,9 +70,9 @@ Replace `<python>` with `.venv\Scripts\python` on **Windows** or `.venv/bin/pyth
 | **5. Capture & apply lock screen** | `<python> cli.py refresh-screen` | Renders display, captures `output/lockscreen.png` at native resolution, and applies the Windows/macOS lock screen. |
 | **6. Live desktop wallpaper** | `<python> cli.py setup-wallpaper` | Points **Lively Wallpaper** (Windows) or **Plash** (Mac) to `output/index.html`. |
 | **7. Schedule refreshes** | `<python> cli.py schedule install` | Registers Windows Task Scheduler / macOS `launchd` for morning (`--time 07:00`) + on-change (`--poll-minutes 30`, `--if-changed`) refreshes. Use `show` or `uninstall` to manage. |
-| **8. Text replan** | `<python> cli.py say "I have plans on the 28th"` | Uses Gemini to add a Calendar event or tick an open Task, recomputes in pure Python, syncs Tasks, refreshes the lock screen, and explains what moved. |
-| **9. Push-to-talk voice replan** | `<python> cli.py voice --speak` | Records from your mic (auto-stops on silence, max 10s / clamped `<= 15s`), runs Gemini voice replan, refreshes screen, and speaks the reply via `en-US-AriaNeural`. Pass `--file clip.wav` to replay a local WAV. |
-| **10. Always-on `"Hey Gemini"`** | `<python> cli.py listen --speak` | Runs 100% offline wake-word detection (**\$0, 0 Gemini calls while idle**); chimes on `"hey gemini"`, records your command, replans, and speaks back. Use `--once` for a single activation or `--wake-phrase "..."` to customize. |
+| **8. Text replan** | `<python> cli.py say "I have plans on the 28th"` | Uses Gemini to add a Calendar event, tick a Task, log partial units/papers (e.g., `"I read half a paper for Ethics Essay"`), or update target due dates, then recomputes in pure Python, syncs Tasks, reloads live wallpaper/lock screen, and explains what moved. |
+| **9. Push-to-talk voice replan** | `<python> cli.py voice --speak` | Records from your mic (auto-stops on silence, max 10s / clamped `<= 15s`), prints verbatim `Heard: "..."`, runs Gemini voice replan, refreshes screen + wallpaper, and speaks the reply via `en-US-AriaNeural`. Pass `--file clip.wav` to replay a local WAV. |
+| **10. Always-on `"Hey Gemini"`** | `<python> cli.py listen --speak` | Runs 100% offline wake-word detection (**\$0, 0 Gemini calls while idle**); triggers cleanly on `"hey gemini"`, records your command, replans, and speaks back. Optional flags: `--once`, `--chime`, `--wake-phrase "..."`. |
 
 ### Useful Flags & Customization
 - **Custom background:** Uses `assets/background.jpg` by default. Swap that file, set `"display": {"background": "..."}` in `config/targets.json`, or pass `--background <path-or-url>` (`--background ""` falls back to the dark gradient).
