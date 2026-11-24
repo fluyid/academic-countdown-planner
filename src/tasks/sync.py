@@ -8,7 +8,7 @@ from typing import Any
 
 from src.planner.models import StudyPlan
 from src.tasks.client import create_task, delete_task, list_tasks, update_task
-from src.tasks.codec import build_task_body, parse_task_meta, task_matches_body
+from src.tasks.codec import build_task_body, parse_task_meta, task_consumes_day, task_matches_body
 
 
 @dataclass
@@ -42,7 +42,8 @@ def sync_plan_to_tasks(
             continue
         day, _ = parsed
         if task.get("status") == "completed":
-            completed_days.add(day)
+            if task_consumes_day(task):
+                completed_days.add(day)
             completed_preserved += 1
         else:
             open_by_day.setdefault(day, []).append(task)

@@ -11,6 +11,7 @@ from typing import Any, Callable
 from src.calendar_client import CONFIG_PATH, create_calendar_event, get_calendar_service, get_events_in_window
 from src.gemini.actions import (
     AddEventAction,
+    LogProgressAction,
     ParsedAction,
     TickTaskAction,
     UnclearAction,
@@ -20,10 +21,12 @@ from src.gemini.actions import (
 )
 from src.gemini.client import generate_content
 from src.gemini.explain import explain_replan
-from src.planner import StudyPlan, build_plan, load_config, plan_window
+from src.planner import StudyPlan, build_plan, format_units, load_config, plan_window
 from src.tasks import (
     SyncResult,
+    build_progress_log_body,
     complete_task,
+    create_task,
     get_or_create_tasklist,
     get_tasks_service,
     list_tasks,
@@ -131,6 +134,20 @@ def _replan(
         ticked_task = {"id": action.task_id, "title": action.task_title, "due": action.task_due}
         due_part = f" (due {action.task_due})" if action.task_due else ""
         action_summary = f"Ticked task: '{action.task_title}'{due_part}."
+    elif isinstance(action, LogProgressAction):
+        pages_per_unit = float(config.get("capacity_rules", {}).get("pages_per_unit", 40.0))
+        log_body = build_progress_log_body(
+            ref_day,
+            action.target_id,
+            action.target_name,
+            action.units,
+            is_reading=action.is_reading,
+            pages_per_unit=pages_per_unit,
+        )
+        created_log = create_task(task_svc, tasklist_id, log_body)
+        complete_task(task_svc, tasklist_id, created_log["id"])
+        ticked_task = {"id": created_log["id"], "title": log_body["title"], "due": ref_day.isoformat()}
+        action_summary = f"Logged completed progress: {action.target_name} ({format_units(action.units)})."
     elif isinstance(action, UpdateTargetDatesAction):
         by_id = {u.target_id: u for u in action.updates}
         target_types: dict[str, str] = {}

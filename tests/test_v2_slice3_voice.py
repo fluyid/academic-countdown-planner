@@ -21,6 +21,7 @@ from src.gemini import (
     DEFAULT_MODEL,
     MAX_AUDIO_BYTES,
     AddEventAction,
+    LogProgressAction,
     TickTaskAction,
     UnclearAction,
     UpdateTargetDatesAction,
@@ -411,6 +412,55 @@ class TestV2Slice3Voice(unittest.TestCase):
             }),
         )
         self.assertIsInstance(bad_target, UnclearAction)
+
+        # 5. Partial/custom progress logging via audio (e.g. "finished 0.75 units of Linear Algebra")
+        #    logs a completed task in Google Tasks without consuming today, updating progress cleanly.
+        log_task_svc = FakeTasksService()
+        log_list_id = get_or_create_tasklist(log_task_svc, "Countdown Planner (Test)")
+        log_replies = iter([
+            json.dumps({
+                "action": "log_progress",
+                "target_id": "linear-algebra-exam",
+                "units": 0.75,
+                "is_reading": False,
+            }),
+            "Logged 0.75 units of Linear Algebra; 4.25 units remain.",
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_log = Path(tmp) / "targets.json"
+            cfg_log.write_text(json.dumps(self.config, indent=2), encoding="utf-8")
+            res_log = replan_from_audio(
+                self.sample_wav,
+                config_path=cfg_log,
+                today=date(2026, 11, 24),
+                apply_lock_screen=False,
+                calendar_service=FakeCalendarService(),
+                tasks_service=log_task_svc,
+                call_gemini=lambda *a, **kw: next(log_replies),
+                refresh_fn=fake_refresh,
+            )
+        self.assertIsInstance(res_log.action, LogProgressAction)
+        self.assertEqual(res_log.action.units, 0.75)
+        self.assertIn("Linear Algebra (0.75 units)", res_log.action_summary)
+        self.assertEqual(res_log.sync_result.completed_preserved, 1)
+        # Today (Nov 24) still gets scheduled because consume_day=False, while LA remaining drops by 0.75.
+        self.assertTrue(res_log.after_plan.days[0].allocations)
+        la_allocs = [a.units for d in res_log.after_plan.days for a in d.allocations if a.target_id == "linear-algebra-exam"]
+        self.assertAlmostEqual(sum(la_allocs), 4.25, places=4)
+        self.assertTrue(
+            any(t.get("status") == "completed" and "0.75 units" in t.get("title", "") for t in log_task_svc.tasks_by_list[log_list_id])
+        )
+
+        # Invalid/hallucinated log_progress target_id or non-positive units are rejected safely.
+        bad_log = parse_audio_action(
+            self.sample_wav,
+            today=date(2026, 11, 24),
+            calendars={"personal": "Kai Nath", "university": "IU"},
+            open_tasks=[],
+            targets=self.config["targets"],
+            call_gemini=lambda *a, **kw: json.dumps({"action": "log_progress", "target_id": "linear-algebra-exam", "units": -1}),
+        )
+        self.assertIsInstance(bad_log, UnclearAction)
 
     def test_local_os_tts_commands_and_schedule_isolation(self) -> None:
         tricky = "Moved NLP to Dec 2; $(calc.exe) 'quoted'"

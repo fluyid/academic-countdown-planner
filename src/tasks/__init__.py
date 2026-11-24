@@ -9,12 +9,21 @@ from src.tasks.client import (
     list_tasks,
     update_task,
 )
-from src.tasks.codec import META_PREFIX, build_task_body, parse_task_meta, read_completed_progress, task_matches_body
+from src.tasks.codec import (
+    META_PREFIX,
+    build_progress_log_body,
+    build_task_body,
+    parse_task_meta,
+    read_completed_progress,
+    task_consumes_day,
+    task_matches_body,
+)
 from src.tasks.sync import SyncResult, format_sync_summary, sync_plan_to_tasks
 
 __all__ = [
     "META_PREFIX",
     "SyncResult",
+    "build_progress_log_body",
     "build_task_body",
     "complete_task",
     "create_task",
@@ -26,6 +35,7 @@ __all__ = [
     "parse_task_meta",
     "read_completed_progress",
     "sync_plan_to_tasks",
+    "task_consumes_day",
     "task_matches_body",
     "update_task",
 ]

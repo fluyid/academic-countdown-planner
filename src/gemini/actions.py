@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from datetime import date, time
 from typing import Any, Callable
@@ -43,18 +44,26 @@ class UpdateTargetDatesAction:
 
 
 @dataclass(frozen=True)
+class LogProgressAction:
+    target_id: str
+    target_name: str
+    units: float
+    is_reading: bool = False
+
+
+@dataclass(frozen=True)
 class UnclearAction:
     reason: str
 
 
-ParsedAction = AddEventAction | TickTaskAction | UpdateTargetDatesAction | UnclearAction
+ParsedAction = AddEventAction | TickTaskAction | UpdateTargetDatesAction | LogProgressAction | UnclearAction
 
 ACTION_SCHEMA: dict[str, Any] = {
     "type": "OBJECT",
     "properties": {
         "action": {
             "type": "STRING",
-            "enum": ["add_event", "tick_task", "update_target_dates", "unclear"],
+            "enum": ["add_event", "tick_task", "update_target_dates", "log_progress", "unclear"],
         },
         "calendar": {"type": "STRING", "enum": ["personal", "university"], "nullable": True},
         "summary": {"type": "STRING", "nullable": True},
@@ -64,6 +73,9 @@ ACTION_SCHEMA: dict[str, Any] = {
         "start_time": {"type": "STRING", "nullable": True},
         "end_time": {"type": "STRING", "nullable": True},
         "task_id": {"type": "STRING", "nullable": True},
+        "target_id": {"type": "STRING", "nullable": True},
+        "units": {"type": "NUMBER", "nullable": True},
+        "is_reading": {"type": "BOOLEAN", "nullable": True},
         "target_updates": {
             "type": "ARRAY",
             "nullable": True,
@@ -84,10 +96,16 @@ ACTION_SCHEMA: dict[str, Any] = {
 _SYSTEM_PROMPT = (
     "You translate one student utterance into ONE structured action: "
     "'add_event' (add a Google Calendar event such as personal plans, trips, dinners, classes, or seminars), "
-    "'tick_task' (mark an existing open Google Task completed), "
+    "'tick_task' (mark one exact existing open Google Task from OPEN TASKS completed), "
+    "'log_progress' (log a specific completed amount of units, including partial units like 0.25, 0.5, 0.75, or 1, "
+    "for a target in CONFIGURED TARGETS when the user finished custom/partial progress or studied ahead of schedule), "
     "'update_target_dates' (set or change the due/exam date for ONE OR MORE targets in CONFIGURED TARGETS), "
     "or 'unclear' (if ambiguous or none applies). "
     "Do zero scheduling math. "
+    "For 'log_progress': e.g. 'I finished 0.75 units of Linear Algebra' -> action='log_progress', "
+    "target_id='linear-algebra-exam', units=0.75, is_reading=false; for reading papers (e.g. 'I read 0.5 units / "
+    "one paper for Ethics Essay') set is_reading=true; choose ONLY an exact target_id from CONFIGURED TARGETS "
+    "and positive units (> 0). "
     "For 'update_target_dates': whenever the user sets or changes the due date or exam date of any exam or assignment "
     "listed in CONFIGURED TARGETS (even multiple in one sentence, e.g. 'my Ethics Essay and Computer Vision assignment "
     "are due Dec 17'), return action='update_target_dates' with one {target_id, date} item per matching target "
@@ -96,7 +114,8 @@ _SYSTEM_PROMPT = (
     "(e.g. 'I have plans on the 28th' -> all_day=true, summary='Plans', calendar='personal'); "
     "for timed events use 24-hour HH:MM start_time and end_time; use calendar='university' for classes/exams "
     "and 'personal' otherwise. "
-    "For 'tick_task': choose ONLY an exact task_id from the provided OPEN TASKS list; if none matches, return 'unclear'."
+    "For 'tick_task': choose ONLY an exact task_id from the provided OPEN TASKS list; if the user specifies a custom "
+    "or partial unit count that does not match an open task, use 'log_progress' instead."
 )
 
 
@@ -212,6 +231,34 @@ def validate_action_payload(
                 due_date=due,
             )
         return UpdateTargetDatesAction(updates=tuple(deduped.values()))
+
+    if kind == "log_progress":
+        tid = str(raw.get("target_id") or "").strip()
+        by_id = {str(t.get("id")): t for t in (targets or []) if t.get("id")}
+        match = by_id.get(tid)
+        if not match:
+            return UnclearAction(reason=f"No matching configured target found (model suggested {tid!r}).")
+        raw_units = raw.get("units")
+        if raw_units is None or isinstance(raw_units, bool):
+            return UnclearAction(reason="Missing unit amount to log.")
+        try:
+            units = round(float(raw_units), 4)
+        except (TypeError, ValueError):
+            return UnclearAction(reason=f"Invalid unit amount: {raw_units!r}.")
+        if not math.isfinite(units) or units <= 0 or units > 20:
+            return UnclearAction(reason=f"Logged units must be in (0, 20] (got {units}).")
+        raw_reading = raw.get("is_reading")
+        if raw_reading is None:
+            # Paper-only assignments (units == 0 with required_papers) log directly to their reading stream.
+            is_reading = bool(match.get("required_papers")) and match.get("units") == 0
+        else:
+            is_reading = bool(raw_reading)
+        return LogProgressAction(
+            target_id=tid,
+            target_name=(match.get("name") or tid).strip(),
+            units=units,
+            is_reading=is_reading,
+        )
 
     raise ValueError(f"Unknown action from Gemini: {kind!r}")
 
