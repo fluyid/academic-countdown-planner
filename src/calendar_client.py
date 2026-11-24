@@ -90,6 +90,7 @@ def create_calendar_event(
     start_time: str | None = None,
     end_time: str | None = None,
     calendar_role: str = "personal",
+    transparency: str | None = None,
     config_path: Path = CONFIG_PATH,
     service: Any = None,
 ) -> dict[str, Any]:
@@ -121,6 +122,8 @@ def create_calendar_event(
             "end": {"dateTime": datetime.combine(start_date, t_end, tzinfo=tz).isoformat()},
         }
 
+    if transparency:
+        body["transparency"] = transparency
     created = svc.events().insert(calendarId=cid, body=body).execute()
     return {**created, "_calendar_role": role, "_calendar_name": cal_name}
 

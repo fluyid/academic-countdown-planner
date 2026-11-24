@@ -370,6 +370,32 @@ class TestV2Slice3Voice(unittest.TestCase):
             self.assertEqual(saved_dates["cv-assignment"], "2026-12-17")
             self.assertIn("Ethics Essay -> 2026-12-17", res_dates.action_summary)
             self.assertIn("Computer Vision Assignment -> 2026-12-17", res_dates.action_summary)
+            # Transparent all-day Due events are added to the university (IU) calendar without blocking Dec 17.
+            uni_due = [body for cid, body in cal_svc.inserted if cid == "cal-uni"]
+            self.assertEqual(
+                {(b["summary"], b["start"]["date"], b.get("transparency")) for b in uni_due},
+                {
+                    ("Ethics Essay Due", "2026-12-17", "transparent"),
+                    ("Computer Vision Assignment Due", "2026-12-17", "transparent"),
+                },
+            )
+            dec17 = next(d for d in res_dates.after_plan.days if d.day == date(2026, 12, 17))
+            self.assertEqual(dec17.day_type, "free")
+
+            # Repeating the same update does not create duplicate calendar events.
+            before_ins = len(cal_svc.inserted)
+            seen_prompts.clear()
+            replan_from_audio(
+                self.sample_wav,
+                config_path=cfg_copy,
+                today=date(2026, 11, 24),
+                apply_lock_screen=False,
+                calendar_service=cal_svc,
+                tasks_service=task_svc,
+                call_gemini=fake_gemini_dates,
+                refresh_fn=fake_refresh,
+            )
+            self.assertEqual(len(cal_svc.inserted), before_ins)
 
         # Hallucinated target_id must be rejected as UnclearAction (never writes config).
         bad_target = parse_audio_action(

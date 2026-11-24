@@ -103,9 +103,12 @@ class FakeTasksService:
         return _Tasks()
 
 
+from tests.test_slice2_planner import baseline_config
+
+
 class TestSlice3Tasks(unittest.TestCase):
     def setUp(self) -> None:
-        self.config = load_config()
+        self.config = baseline_config()
 
     def test_codec_round_trip_and_completed_progress(self) -> None:
         day_plan = DayPlan(

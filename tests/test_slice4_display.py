@@ -21,12 +21,13 @@ from src.display import (
     render_display_html,
     write_display,
 )
-from src.planner import build_plan, load_config
+from src.planner import build_plan
+from tests.test_slice2_planner import baseline_config
 
 
 class TestSlice4Display(unittest.TestCase):
     def setUp(self) -> None:
-        self.config = load_config()
+        self.config = baseline_config()
 
     def test_concrete_dates_and_no_t_minus_labels(self) -> None:
         plan = build_plan(self.config, [], start_date=date(2026, 11, 20))

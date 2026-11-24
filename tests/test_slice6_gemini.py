@@ -89,9 +89,12 @@ class _FakeResp:
         return self._body
 
 
+from tests.test_slice2_planner import baseline_config
+
+
 class TestSlice6Gemini(unittest.TestCase):
     def setUp(self) -> None:
-        self.config = load_config()
+        self.config = baseline_config()
 
     def test_key_loading_and_billing_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

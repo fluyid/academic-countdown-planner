@@ -133,15 +133,43 @@ def _replan(
         action_summary = f"Ticked task: '{action.task_title}'{due_part}."
     elif isinstance(action, UpdateTargetDatesAction):
         by_id = {u.target_id: u for u in action.updates}
+        target_types: dict[str, str] = {}
         for target in config.get("targets", []):
             upd = by_id.get(target.get("id"))
             if upd is not None:
                 target["date"] = upd.due_date.isoformat()
+                target_types[upd.target_id] = str(target.get("type") or "assignment")
         config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-        # Recompute plan window so deadlines later than the prior anchor (e.g. Dec 17 > Dec 14) are included.
+        # Recompute plan window so deadlines later than the prior anchor (e.g. Dec 18 > Dec 14) are included.
         start, end = plan_window(config, start_date=ref_day)
+        existing_in_window = get_events_in_window(start, end, config_path=config_path, service=cal_svc)
+        existing_keys = {
+            ((ev.get("summary") or "").strip().lower(), ev.get("start", {}).get("date"))
+            for ev in existing_in_window
+            if ev.get("status") != "cancelled"
+        }
+        for upd in action.updates:
+            is_exam = target_types.get(upd.target_id) == "exam"
+            ev_summary = (
+                upd.target_name
+                if (is_exam and "exam" in upd.target_name.lower())
+                else (f"{upd.target_name} Exam" if is_exam else f"{upd.target_name} Due")
+            )
+            key = (ev_summary.lower(), upd.due_date.isoformat())
+            if key not in existing_keys:
+                # Assignments use transparent all-day events so the deadline appears on IU without blocking study capacity.
+                created_event = create_calendar_event(
+                    ev_summary,
+                    upd.due_date,
+                    all_day=True,
+                    calendar_role="university",
+                    transparency=None if is_exam else "transparent",
+                    config_path=config_path,
+                    service=cal_svc,
+                )
+                existing_keys.add(key)
         parts = [f"{u.target_name} -> {u.due_date.isoformat()}" for u in action.updates]
-        action_summary = f"Updated target dates: {', '.join(parts)}."
+        action_summary = f"Updated target dates (config + university calendar): {', '.join(parts)}."
     else:  # pragma: no cover - exhaustive guard
         raise ValueError(f"Unsupported action: {action!r}")
 
