@@ -251,7 +251,9 @@ def validate_action_payload(
                 num = round(float(val), 4)
             except (TypeError, ValueError):
                 return None
-            if not math.isfinite(num) or num <= 0 or num > 20:
+            if num == 0:
+                return None
+            if not math.isfinite(num) or num < 0 or num > 20:
                 raise ValueError(f"Logged {label} must be in (0, 20] (got {num}).")
             return num
 
