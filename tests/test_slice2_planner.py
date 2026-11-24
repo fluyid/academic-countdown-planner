@@ -12,12 +12,13 @@ from src.planner import build_plan, classify_days, format_plan, format_unit_rati
 
 
 def baseline_config() -> dict:
-    """Stable test fixture decoupled from user edits to dates/units in config/targets.json."""
+    """Stable test fixture decoupled from user edits to dates/units/blackouts in config/targets.json."""
     cfg = copy.deepcopy(load_config())
     for t in cfg.get("targets", []):
         if t.get("id") in ("ethics-essay", "cv-assignment"):
             t["date"] = None
             t["units"] = None
+    cfg.get("capacity_rules", {}).pop("blocked_date_ranges", None)
     return cfg
 
 
@@ -52,6 +53,19 @@ class TestSlice2Planner(unittest.TestCase):
             for a in d.allocations:
                 if a.target_id in ("ethics-essay", "cv-assignment"):
                     self.fail(f"Unexpected extra study day for {a.target_id} on {d.day}")
+
+    def test_blocked_date_ranges_blackout_exam_period(self) -> None:
+        cfg = copy.deepcopy(load_config())
+        plan = build_plan(cfg, [_all_day("Dinner", "2026-11-29")], start_date=date(2026, 11, 24))
+        self._assert_capacity_invariants(plan)
+        blackout_days = [d for d in plan.days if date(2026, 12, 7) <= d.day <= date(2026, 12, 18)]
+        self.assertEqual(len(blackout_days), 12)
+        for d in blackout_days:
+            self.assertEqual(d.day_type, "blocked")
+            self.assertEqual(d.capacity, 0.0)
+            self.assertEqual(d.allocations, [])
+        # Shortfall is surfaced explicitly instead of overflowing into Dec 7-18.
+        self.assertTrue(plan.unscheduled)
 
     def _assert_capacity_invariants(self, plan, max_reading_pages: float = 40.0) -> None:
         for d in plan.days:

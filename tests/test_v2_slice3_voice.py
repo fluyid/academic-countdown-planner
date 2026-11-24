@@ -45,6 +45,7 @@ from src.voice import (
     speak_text,
 )
 from src.wallpaper import RefreshResult, render_schedule_definition
+from tests.test_slice2_planner import baseline_config
 from tests.test_slice3_tasks import FakeTasksService
 from tests.test_slice6_gemini import FakeCalendarService, _FakeResp
 
@@ -76,7 +77,7 @@ class _FakeRawInputStream:
 
 class TestV2Slice3Voice(unittest.TestCase):
     def setUp(self) -> None:
-        self.config = load_config()
+        self.config = baseline_config()
         self.sample_wav = pcm_to_wav_bytes(_pcm_chunk(2000, frames=1600))
 
     def test_generate_content_audio_inline_data_and_guardrails(self) -> None:

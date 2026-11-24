@@ -80,6 +80,13 @@
       "exam",
       "date"
     ],
+    "blocked_date_ranges": [
+      {
+        "start": "2026-12-07",
+        "end": "2026-12-18",
+        "label": "Exam period"
+      }
+    ],
     "max_reading_pages_per_day": 40,
     "pages_per_unit": 40
   }
