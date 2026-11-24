@@ -462,6 +462,38 @@ class TestV2Slice3Voice(unittest.TestCase):
         )
         self.assertIsInstance(bad_log, UnclearAction)
 
+        # 6. Paper-count progress logging ("I read 1 paper for Ethics Essay") converts 1 paper -> 0.5 units in pure Python.
+        paper_task_svc = FakeTasksService()
+        paper_list_id = get_or_create_tasklist(paper_task_svc, "Countdown Planner (Test)")
+        paper_replies = iter([
+            json.dumps({"action": "log_progress", "target_id": "ethics-essay", "papers": 1, "is_reading": True}),
+            "Logged 1 paper for Ethics Essay; 3 papers remain.",
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_p = Path(tmp) / "targets.json"
+            p_cfg = json.loads(json.dumps(self.config))
+            for t in p_cfg["targets"]:
+                if t["id"] in ("ethics-essay", "cv-assignment"):
+                    t["date"] = "2026-12-18"
+                    t["units"] = 0
+            cfg_p.write_text(json.dumps(p_cfg, indent=2), encoding="utf-8")
+            res_paper = replan_from_audio(
+                self.sample_wav,
+                config_path=cfg_p,
+                today=date(2026, 11, 24),
+                apply_lock_screen=False,
+                calendar_service=FakeCalendarService(),
+                tasks_service=paper_task_svc,
+                call_gemini=lambda *a, **kw: next(paper_replies),
+                refresh_fn=fake_refresh,
+            )
+        self.assertIsInstance(res_paper.action, LogProgressAction)
+        self.assertEqual(res_paper.action.papers, 1.0)
+        self.assertIn("Ethics Essay (1 paper)", res_paper.action_summary)
+        self.assertTrue(
+            any("1 paper, 20 pages" in t.get("title", "") for t in paper_task_svc.tasks_by_list[paper_list_id])
+        )
+
     def test_local_os_tts_commands_and_schedule_isolation(self) -> None:
         tricky = "Moved NLP to Dec 2; $(calc.exe) 'quoted'"
 

@@ -21,7 +21,7 @@ from src.gemini.actions import (
 )
 from src.gemini.client import generate_content
 from src.gemini.explain import explain_replan
-from src.planner import StudyPlan, build_plan, format_units, load_config, plan_window
+from src.planner import StudyPlan, build_plan, format_papers, format_units, load_config, plan_window
 from src.tasks import (
     SyncResult,
     build_progress_log_body,
@@ -136,18 +136,27 @@ def _replan(
         action_summary = f"Ticked task: '{action.task_title}'{due_part}."
     elif isinstance(action, LogProgressAction):
         pages_per_unit = float(config.get("capacity_rules", {}).get("pages_per_unit", 40.0))
+        if action.papers is not None:
+            target_cfg = next((t for t in config.get("targets", []) if t.get("id") == action.target_id), {})
+            pages_per_paper = float((target_cfg.get("required_papers") or {}).get("pages_per_paper") or 20.0)
+            logged_units = round((action.papers * pages_per_paper) / pages_per_unit, 4)
+            amount_label = format_papers(action.papers)
+        else:
+            logged_units = float(action.units or 0.0)
+            amount_label = format_units(logged_units)
         log_body = build_progress_log_body(
             ref_day,
             action.target_id,
             action.target_name,
-            action.units,
+            logged_units,
             is_reading=action.is_reading,
+            papers=action.papers,
             pages_per_unit=pages_per_unit,
         )
         created_log = create_task(task_svc, tasklist_id, log_body)
         complete_task(task_svc, tasklist_id, created_log["id"])
         ticked_task = {"id": created_log["id"], "title": log_body["title"], "due": ref_day.isoformat()}
-        action_summary = f"Logged completed progress: {action.target_name} ({format_units(action.units)})."
+        action_summary = f"Logged completed progress: {action.target_name} ({amount_label})."
     elif isinstance(action, UpdateTargetDatesAction):
         by_id = {u.target_id: u for u in action.updates}
         target_types: dict[str, str] = {}

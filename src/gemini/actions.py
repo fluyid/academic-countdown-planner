@@ -47,7 +47,8 @@ class UpdateTargetDatesAction:
 class LogProgressAction:
     target_id: str
     target_name: str
-    units: float
+    units: float | None = None
+    papers: float | None = None
     is_reading: bool = False
 
 
@@ -75,6 +76,7 @@ ACTION_SCHEMA: dict[str, Any] = {
         "task_id": {"type": "STRING", "nullable": True},
         "target_id": {"type": "STRING", "nullable": True},
         "units": {"type": "NUMBER", "nullable": True},
+        "papers": {"type": "NUMBER", "nullable": True},
         "is_reading": {"type": "BOOLEAN", "nullable": True},
         "target_updates": {
             "type": "ARRAY",
@@ -103,9 +105,10 @@ _SYSTEM_PROMPT = (
     "or 'unclear' (if ambiguous or none applies). "
     "Do zero scheduling math. "
     "For 'log_progress': e.g. 'I finished 0.75 units of Linear Algebra' -> action='log_progress', "
-    "target_id='linear-algebra-exam', units=0.75, is_reading=false; for reading papers (e.g. 'I read 0.5 units / "
-    "one paper for Ethics Essay') set is_reading=true; choose ONLY an exact target_id from CONFIGURED TARGETS "
-    "and positive units (> 0). "
+    "target_id='linear-algebra-exam', units=0.75, is_reading=false; for reading papers (e.g. 'I read 1 paper "
+    "for Ethics Essay' or 'I finished 2 papers for Computer Vision') set papers=1 or papers=2 and is_reading=true "
+    "(do NOT convert papers to units yourself); choose ONLY an exact target_id from CONFIGURED TARGETS "
+    "and positive units or papers (> 0). "
     "For 'update_target_dates': whenever the user sets or changes the due date or exam date of any exam or assignment "
     "listed in CONFIGURED TARGETS (even multiple in one sentence, e.g. 'my Ethics Essay and Computer Vision assignment "
     "are due Dec 17'), return action='update_target_dates' with one {target_id, date} item per matching target "
@@ -140,7 +143,9 @@ def _format_targets(targets: list[dict[str, Any]] | None) -> str:
         ttype = target.get("type", "target")
         due = target.get("date") or "TBD"
         name = (target.get("name") or "").strip()
-        lines.append(f"- id={tid} | type={ttype} | due={due} | name={name}")
+        rp = target.get("required_papers")
+        extra = f" | required={rp.get('count')} papers" if isinstance(rp, dict) and rp.get("count") else ""
+        lines.append(f"- id={tid} | type={ttype} | due={due}{extra} | name={name}")
     return "\n".join(lines)
 
 
@@ -238,17 +243,34 @@ def validate_action_payload(
         match = by_id.get(tid)
         if not match:
             return UnclearAction(reason=f"No matching configured target found (model suggested {tid!r}).")
-        raw_units = raw.get("units")
-        if raw_units is None or isinstance(raw_units, bool):
-            return UnclearAction(reason="Missing unit amount to log.")
+
+        def _parse_pos(val: Any, label: str) -> float | None:
+            if val is None or isinstance(val, bool):
+                return None
+            try:
+                num = round(float(val), 4)
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(num) or num <= 0 or num > 20:
+                raise ValueError(f"Logged {label} must be in (0, 20] (got {num}).")
+            return num
+
         try:
-            units = round(float(raw_units), 4)
-        except (TypeError, ValueError):
-            return UnclearAction(reason=f"Invalid unit amount: {raw_units!r}.")
-        if not math.isfinite(units) or units <= 0 or units > 20:
-            return UnclearAction(reason=f"Logged units must be in (0, 20] (got {units}).")
+            papers = _parse_pos(raw.get("papers"), "papers")
+            units = _parse_pos(raw.get("units"), "units")
+        except ValueError as exc:
+            return UnclearAction(reason=str(exc))
+
+        if papers is None and units is None:
+            return UnclearAction(reason="Missing unit or paper amount to log.")
+        if papers is not None and not isinstance(match.get("required_papers"), dict):
+            return UnclearAction(reason=f"Target {match.get('name')!r} does not track papers.")
+
         raw_reading = raw.get("is_reading")
-        if raw_reading is None:
+        if papers is not None:
+            is_reading = True
+            units = None
+        elif raw_reading is None:
             # Paper-only assignments (units == 0 with required_papers) log directly to their reading stream.
             is_reading = bool(match.get("required_papers")) and match.get("units") == 0
         else:
@@ -257,6 +279,7 @@ def validate_action_payload(
             target_id=tid,
             target_name=(match.get("name") or tid).strip(),
             units=units,
+            papers=papers,
             is_reading=is_reading,
         )
 

@@ -6,7 +6,7 @@ import json
 from datetime import date
 from typing import Any
 
-from src.planner.formatter import format_allocation_amount, format_pages, format_unit_ratio, format_units
+from src.planner.formatter import format_allocation_amount, format_pages, format_papers, format_unit_ratio, format_units
 from src.planner.models import Allocation, DayPlan, reading_target_id
 
 META_PREFIX = "[countdown-planner] "
@@ -44,6 +44,7 @@ def build_progress_log_body(
     units: float,
     *,
     is_reading: bool = False,
+    papers: float | None = None,
     pages_per_unit: float = 40.0,
 ) -> dict[str, str]:
     clean_units = round(float(units), 4)
@@ -51,11 +52,13 @@ def build_progress_log_body(
         raise ValueError("Logged units must be > 0.")
     meta_tid = reading_target_id(target_id) if is_reading else target_id
     label = f"{target_name} \u2014 Required Paper Reading" if is_reading else target_name
-    amount = (
-        f"{format_units(clean_units)} ({format_pages(round(clean_units * pages_per_unit, 4))})"
-        if is_reading
-        else format_units(clean_units)
-    )
+    if papers is not None and papers > 0:
+        pages_str = format_pages(round(clean_units * pages_per_unit, 4))
+        amount = f"{format_papers(papers)}, {pages_str}"
+    elif is_reading:
+        amount = f"{format_units(clean_units)} ({format_pages(round(clean_units * pages_per_unit, 4))})"
+    else:
+        amount = format_units(clean_units)
     title = f"Logged: {label} ({amount})"
     due = f"{day.isoformat()}T00:00:00.000Z"
     meta = json.dumps(
