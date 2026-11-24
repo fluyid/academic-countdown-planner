@@ -23,6 +23,7 @@ from src.gemini import (
     AddEventAction,
     TickTaskAction,
     UnclearAction,
+    UpdateTargetDatesAction,
     generate_content,
     parse_audio_action,
     replan_from_audio,
@@ -329,6 +330,60 @@ class TestV2Slice3Voice(unittest.TestCase):
         self.assertEqual(unclear_calls, 1)
         self.assertEqual(len(cal_svc.inserted), cal_count_before)
         self.assertIsNone(res_unclear.sync_result)
+
+        # 4. Combined target due-date update via audio (Ethics Essay + CV Assignment -> Dec 17)
+        #    updates targets.json, extends plan_window through Dec 17, syncs Tasks, and refreshes screen.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_copy = Path(tmp) / "targets.json"
+            cfg_copy.write_text(json.dumps(self.config, indent=2), encoding="utf-8")
+            seen_prompts: list[str] = []
+
+            def fake_gemini_dates(prompt: str, **kwargs) -> str:
+                seen_prompts.append(prompt)
+                if len(seen_prompts) == 1:
+                    return json.dumps({
+                        "action": "update_target_dates",
+                        "target_updates": [
+                            {"target_id": "ethics-essay", "date": "2026-12-17"},
+                            {"target_id": "cv-assignment", "date": "2026-12-17"},
+                        ],
+                    })
+                return "Updated Ethics Essay and Computer Vision Assignment due dates to Dec 17."
+
+            res_dates = replan_from_audio(
+                self.sample_wav,
+                config_path=cfg_copy,
+                today=date(2026, 11, 24),
+                apply_lock_screen=False,
+                calendar_service=cal_svc,
+                tasks_service=task_svc,
+                call_gemini=fake_gemini_dates,
+                refresh_fn=fake_refresh,
+            )
+            self.assertIsInstance(res_dates.action, UpdateTargetDatesAction)
+            self.assertIn("CONFIGURED TARGETS:", seen_prompts[0])
+            self.assertIn("ethics-essay", seen_prompts[0])
+            self.assertEqual(res_dates.after_plan.end_date, date(2026, 12, 17))
+            saved = json.loads(cfg_copy.read_text(encoding="utf-8"))
+            saved_dates = {t["id"]: t["date"] for t in saved["targets"]}
+            self.assertEqual(saved_dates["ethics-essay"], "2026-12-17")
+            self.assertEqual(saved_dates["cv-assignment"], "2026-12-17")
+            self.assertIn("Ethics Essay -> 2026-12-17", res_dates.action_summary)
+            self.assertIn("Computer Vision Assignment -> 2026-12-17", res_dates.action_summary)
+
+        # Hallucinated target_id must be rejected as UnclearAction (never writes config).
+        bad_target = parse_audio_action(
+            self.sample_wav,
+            today=date(2026, 11, 24),
+            calendars={"personal": "Kai Nath", "university": "IU"},
+            open_tasks=[],
+            targets=self.config["targets"],
+            call_gemini=lambda *a, **kw: json.dumps({
+                "action": "update_target_dates",
+                "target_updates": [{"target_id": "nonexistent-essay", "date": "2026-12-17"}],
+            }),
+        )
+        self.assertIsInstance(bad_target, UnclearAction)
 
     def test_local_os_tts_commands_and_schedule_isolation(self) -> None:
         tricky = "Moved NLP to Dec 2; $(calc.exe) 'quoted'"

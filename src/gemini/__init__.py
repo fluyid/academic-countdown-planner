@@ -3,8 +3,10 @@
 from src.gemini.actions import (
     AddEventAction,
     ParsedAction,
+    TargetDateUpdate,
     TickTaskAction,
     UnclearAction,
+    UpdateTargetDatesAction,
     parse_audio_action,
     parse_user_action,
 )
@@ -32,8 +34,10 @@ __all__ = [
     "AddEventAction",
     "ParsedAction",
     "ReplanResult",
+    "TargetDateUpdate",
     "TickTaskAction",
     "UnclearAction",
+    "UpdateTargetDatesAction",
     "check_and_increment_usage",
     "explain_replan",
     "generate_content",

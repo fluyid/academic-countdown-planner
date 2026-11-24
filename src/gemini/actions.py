@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 from src.gemini.client import generate_content
 
-PARSE_MAX_OUTPUT_TOKENS = 200
+PARSE_MAX_OUTPUT_TOKENS = 256
 
 
 @dataclass(frozen=True)
@@ -31,16 +31,31 @@ class TickTaskAction:
 
 
 @dataclass(frozen=True)
+class TargetDateUpdate:
+    target_id: str
+    target_name: str
+    due_date: date
+
+
+@dataclass(frozen=True)
+class UpdateTargetDatesAction:
+    updates: tuple[TargetDateUpdate, ...]
+
+
+@dataclass(frozen=True)
 class UnclearAction:
     reason: str
 
 
-ParsedAction = AddEventAction | TickTaskAction | UnclearAction
+ParsedAction = AddEventAction | TickTaskAction | UpdateTargetDatesAction | UnclearAction
 
 ACTION_SCHEMA: dict[str, Any] = {
     "type": "OBJECT",
     "properties": {
-        "action": {"type": "STRING", "enum": ["add_event", "tick_task", "unclear"]},
+        "action": {
+            "type": "STRING",
+            "enum": ["add_event", "tick_task", "update_target_dates", "unclear"],
+        },
         "calendar": {"type": "STRING", "enum": ["personal", "university"], "nullable": True},
         "summary": {"type": "STRING", "nullable": True},
         "date": {"type": "STRING", "nullable": True},
@@ -49,6 +64,18 @@ ACTION_SCHEMA: dict[str, Any] = {
         "start_time": {"type": "STRING", "nullable": True},
         "end_time": {"type": "STRING", "nullable": True},
         "task_id": {"type": "STRING", "nullable": True},
+        "target_updates": {
+            "type": "ARRAY",
+            "nullable": True,
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "target_id": {"type": "STRING"},
+                    "date": {"type": "STRING"},
+                },
+                "required": ["target_id", "date"],
+            },
+        },
         "reason": {"type": "STRING", "nullable": True},
     },
     "required": ["action"],
@@ -56,9 +83,15 @@ ACTION_SCHEMA: dict[str, Any] = {
 
 _SYSTEM_PROMPT = (
     "You translate one student utterance into ONE structured action: "
-    "'add_event' (add a Google Calendar event), 'tick_task' (mark an existing open Google Task completed), "
-    "or 'unclear' (if ambiguous or neither action applies). "
+    "'add_event' (add a Google Calendar event such as personal plans, trips, dinners, classes, or seminars), "
+    "'tick_task' (mark an existing open Google Task completed), "
+    "'update_target_dates' (set or change the due/exam date for ONE OR MORE targets in CONFIGURED TARGETS), "
+    "or 'unclear' (if ambiguous or none applies). "
     "Do zero scheduling math. "
+    "For 'update_target_dates': whenever the user sets or changes the due date or exam date of any exam or assignment "
+    "listed in CONFIGURED TARGETS (even multiple in one sentence, e.g. 'my Ethics Essay and Computer Vision assignment "
+    "are due Dec 17'), return action='update_target_dates' with one {target_id, date} item per matching target "
+    "using ONLY exact target_id values from CONFIGURED TARGETS and YYYY-MM-DD dates; if none matches, return 'unclear'. "
     "For 'add_event': use YYYY-MM-DD dates; set all_day=true whenever no specific clock hours are given "
     "(e.g. 'I have plans on the 28th' -> all_day=true, summary='Plans', calendar='personal'); "
     "for timed events use 24-hour HH:MM start_time and end_time; use calendar='university' for classes/exams "
@@ -79,6 +112,19 @@ def _format_open_tasks(open_tasks: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _format_targets(targets: list[dict[str, Any]] | None) -> str:
+    if not targets:
+        return "(none)"
+    lines = []
+    for target in targets:
+        tid = target.get("id", "")
+        ttype = target.get("type", "target")
+        due = target.get("date") or "TBD"
+        name = (target.get("name") or "").strip()
+        lines.append(f"- id={tid} | type={ttype} | due={due} | name={name}")
+    return "\n".join(lines)
+
+
 def _validate_hhmm(value: Any, field_name: str) -> str:
     if not isinstance(value, str) or len(value.strip()) != 5:
         raise ValueError(f"Invalid {field_name} from Gemini: {value!r}; expected HH:MM.")
@@ -87,10 +133,14 @@ def _validate_hhmm(value: Any, field_name: str) -> str:
     return cleaned
 
 
-def validate_action_payload(raw: dict[str, Any], open_tasks: list[dict[str, Any]]) -> ParsedAction:
+def validate_action_payload(
+    raw: dict[str, Any],
+    open_tasks: list[dict[str, Any]],
+    targets: list[dict[str, Any]] | None = None,
+) -> ParsedAction:
     kind = raw.get("action")
     if kind == "unclear":
-        reason = (raw.get("reason") or "Could not map input to a Calendar event or an open Task.").strip()
+        reason = (raw.get("reason") or "Could not map input to a Calendar event, target date, or open Task.").strip()
         return UnclearAction(reason=reason)
 
     if kind == "add_event":
@@ -139,13 +189,43 @@ def validate_action_payload(raw: dict[str, Any], open_tasks: list[dict[str, Any]
             task_due=(match.get("due") or "")[:10],
         )
 
+    if kind == "update_target_dates":
+        raw_updates = raw.get("target_updates")
+        if not isinstance(raw_updates, list) or not raw_updates:
+            return UnclearAction(reason="No target date updates provided.")
+        by_id = {str(t.get("id")): t for t in (targets or []) if t.get("id")}
+        deduped: dict[str, TargetDateUpdate] = {}
+        for item in raw_updates:
+            if not isinstance(item, dict):
+                raise ValueError("Invalid target_updates item from Gemini.")
+            tid = str(item.get("target_id") or "").strip()
+            match = by_id.get(tid)
+            if not match:
+                return UnclearAction(reason=f"No matching configured target found (model suggested {tid!r}).")
+            raw_date = item.get("date")
+            if not isinstance(raw_date, str) or not raw_date.strip():
+                raise ValueError(f"Gemini update_target_dates item for {tid!r} is missing a YYYY-MM-DD date.")
+            due = date.fromisoformat(raw_date.strip())
+            deduped[tid] = TargetDateUpdate(
+                target_id=tid,
+                target_name=(match.get("name") or tid).strip(),
+                due_date=due,
+            )
+        return UpdateTargetDatesAction(updates=tuple(deduped.values()))
+
     raise ValueError(f"Unknown action from Gemini: {kind!r}")
 
 
-def _context_block(today: date, calendars: dict[str, str], open_tasks: list[dict[str, Any]]) -> str:
+def _context_block(
+    today: date,
+    calendars: dict[str, str],
+    open_tasks: list[dict[str, Any]],
+    targets: list[dict[str, Any]] | None = None,
+) -> str:
     return (
         f"TODAY: {today.isoformat()} ({today.strftime('%A')})\n"
         f"CALENDARS: personal={calendars.get('personal', 'Kai Nath')}, university={calendars.get('university', 'IU')}\n"
+        f"CONFIGURED TARGETS:\n{_format_targets(targets)}\n"
         f"OPEN TASKS:\n{_format_open_tasks(open_tasks)}"
     )
 
@@ -154,6 +234,7 @@ def _request_action(
     prompt: str,
     *,
     open_tasks: list[dict[str, Any]],
+    targets: list[dict[str, Any]] | None,
     call_gemini: Callable[..., str],
     audio_bytes: bytes | None = None,
     audio_mime_type: str = "audio/wav",
@@ -174,7 +255,7 @@ def _request_action(
         raise RuntimeError(f"Gemini returned invalid JSON for action parsing: {raw_text[:200]}") from exc
     if not isinstance(parsed, dict):
         raise RuntimeError("Gemini action response must be a JSON object.")
-    return validate_action_payload(parsed, open_tasks)
+    return validate_action_payload(parsed, open_tasks, targets=targets)
 
 
 def parse_user_action(
@@ -183,14 +264,15 @@ def parse_user_action(
     today: date,
     calendars: dict[str, str],
     open_tasks: list[dict[str, Any]],
+    targets: list[dict[str, Any]] | None = None,
     call_gemini: Callable[..., str] = generate_content,
 ) -> ParsedAction:
     cleaned = utterance.strip()
     if not cleaned:
         raise ValueError("Please provide a plain-language instruction.")
 
-    prompt = f"{_context_block(today, calendars, open_tasks)}\n\nUSER INPUT: {cleaned}"
-    return _request_action(prompt, open_tasks=open_tasks, call_gemini=call_gemini)
+    prompt = f"{_context_block(today, calendars, open_tasks, targets)}\n\nUSER INPUT: {cleaned}"
+    return _request_action(prompt, open_tasks=open_tasks, targets=targets, call_gemini=call_gemini)
 
 
 def parse_audio_action(
@@ -199,6 +281,7 @@ def parse_audio_action(
     today: date,
     calendars: dict[str, str],
     open_tasks: list[dict[str, Any]],
+    targets: list[dict[str, Any]] | None = None,
     audio_mime_type: str = "audio/wav",
     call_gemini: Callable[..., str] = generate_content,
 ) -> ParsedAction:
@@ -206,12 +289,13 @@ def parse_audio_action(
         raise ValueError("Audio clip is empty.")
 
     prompt = (
-        f"{_context_block(today, calendars, open_tasks)}\n\n"
+        f"{_context_block(today, calendars, open_tasks, targets)}\n\n"
         "USER INPUT: Listen to the attached voice clip and map it to one structured action."
     )
     return _request_action(
         prompt,
         open_tasks=open_tasks,
+        targets=targets,
         call_gemini=call_gemini,
         audio_bytes=audio_bytes,
         audio_mime_type=audio_mime_type,

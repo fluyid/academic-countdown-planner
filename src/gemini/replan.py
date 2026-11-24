@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -13,6 +14,7 @@ from src.gemini.actions import (
     ParsedAction,
     TickTaskAction,
     UnclearAction,
+    UpdateTargetDatesAction,
     parse_audio_action,
     parse_user_action,
 )
@@ -60,7 +62,7 @@ def _format_event_summary(action: AddEventAction, created: dict[str, Any]) -> st
 
 
 def _replan(
-    parse_action: Callable[[date, dict[str, str], list[dict[str, Any]]], ParsedAction],
+    parse_action: Callable[[date, dict[str, str], list[dict[str, Any]], list[dict[str, Any]]], ParsedAction],
     *,
     config_path: Path = CONFIG_PATH,
     list_name: str | None = None,
@@ -93,7 +95,7 @@ def _replan(
     )
 
     open_tasks = [t for t in tasks_before if t.get("status") != "completed" and t.get("id")]
-    action = parse_action(ref_day, config.get("calendars", {}), open_tasks)
+    action = parse_action(ref_day, config.get("calendars", {}), open_tasks, config.get("targets", []))
 
     if isinstance(action, UnclearAction):
         return ReplanResult(
@@ -129,6 +131,17 @@ def _replan(
         ticked_task = {"id": action.task_id, "title": action.task_title, "due": action.task_due}
         due_part = f" (due {action.task_due})" if action.task_due else ""
         action_summary = f"Ticked task: '{action.task_title}'{due_part}."
+    elif isinstance(action, UpdateTargetDatesAction):
+        by_id = {u.target_id: u for u in action.updates}
+        for target in config.get("targets", []):
+            upd = by_id.get(target.get("id"))
+            if upd is not None:
+                target["date"] = upd.due_date.isoformat()
+        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        # Recompute plan window so deadlines later than the prior anchor (e.g. Dec 17 > Dec 14) are included.
+        start, end = plan_window(config, start_date=ref_day)
+        parts = [f"{u.target_name} -> {u.due_date.isoformat()}" for u in action.updates]
+        action_summary = f"Updated target dates: {', '.join(parts)}."
     else:  # pragma: no cover - exhaustive guard
         raise ValueError(f"Unsupported action: {action!r}")
 
@@ -183,8 +196,13 @@ def replan_from_text(
     refresh_fn: Callable[..., RefreshResult] = refresh_screen,
 ) -> ReplanResult:
     return _replan(
-        lambda ref_day, cals, open_tasks: parse_user_action(
-            utterance, today=ref_day, calendars=cals, open_tasks=open_tasks, call_gemini=call_gemini
+        lambda ref_day, cals, open_tasks, targets: parse_user_action(
+            utterance,
+            today=ref_day,
+            calendars=cals,
+            open_tasks=open_tasks,
+            targets=targets,
+            call_gemini=call_gemini,
         ),
         config_path=config_path,
         list_name=list_name,
@@ -215,11 +233,12 @@ def replan_from_audio(
     if not audio_bytes:
         raise ValueError("Audio clip is empty.")
     return _replan(
-        lambda ref_day, cals, open_tasks: parse_audio_action(
+        lambda ref_day, cals, open_tasks, targets: parse_audio_action(
             audio_bytes,
             today=ref_day,
             calendars=cals,
             open_tasks=open_tasks,
+            targets=targets,
             audio_mime_type=audio_mime_type,
             call_gemini=call_gemini,
         ),
