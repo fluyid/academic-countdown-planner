@@ -92,6 +92,9 @@ def apply_lock_screen(image_path: Path, *, platform: str | None = None) -> Path:
     raise NotImplementedError(f"Lock-screen application is supported on Windows and macOS only (got {plat}).")
 
 
+_HUD_HTML_MARKER = 'aria-label="Academic Study Countdown"'
+
+
 def _find_lively_cli() -> Path | None:
     for name in ("livelycu", "livelycu.exe", "Lively.exe"):
         hit = shutil.which(name)
@@ -99,10 +102,87 @@ def _find_lively_cli() -> Path | None:
             return Path(hit)
     local = os.environ.get("LOCALAPPDATA", "")
     candidates = [
+        Path(local) / "Microsoft/WindowsApps/livelycu.exe" if local else None,
+        Path(local) / "Programs/Lively Wallpaper/livelycu.exe" if local else None,
         Path(local) / "Programs/Lively Wallpaper/Lively.exe" if local else None,
         Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Lively Wallpaper/Lively.exe",
     ]
     return next((p for p in candidates if p and p.is_file()), None)
+
+
+def _sync_lively_library_copies(html_path: Path, *, local_appdata: Path | None = None) -> int:
+    """Update any copied Countdown HTML files inside Lively Wallpaper's local Library folders."""
+    base = local_appdata or (Path(os.environ["LOCALAPPDATA"]) if os.environ.get("LOCALAPPDATA") else None)
+    if not base or not base.is_dir() or not html_path.is_file():
+        return 0
+
+    roots = [base / "Lively Wallpaper" / "Library" / "wallpapers"]
+    packages_dir = base / "Packages"
+    if packages_dir.is_dir():
+        roots.extend(
+            pkg / "LocalCache" / "Local" / "Lively Wallpaper" / "Library" / "wallpapers"
+            for pkg in packages_dir.glob("*LivelyWallpaper*")
+        )
+
+    plan_json = html_path.with_name("plan.json")
+    updated = 0
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for entry in root.iterdir():
+            if not entry.is_dir():
+                continue
+            target_html = entry / "index.html"
+            if not target_html.is_file():
+                continue
+            try:
+                head = target_html.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            if _HUD_HTML_MARKER not in head:
+                continue
+            shutil.copy2(html_path, target_html)
+            if plan_json.is_file():
+                shutil.copy2(plan_json, entry / "plan.json")
+            updated += 1
+    return updated
+
+
+def reload_live_wallpaper(
+    html_path: Path,
+    *,
+    platform: str | None = None,
+    local_appdata: Path | None = None,
+) -> bool:
+    """Best-effort live desktop wallpaper refresh (Lively Wallpaper on Windows, Plash on macOS)."""
+    resolved = Path(html_path).resolve()
+    plat = platform or sys.platform
+
+    if plat == "win32":
+        synced = _sync_lively_library_copies(resolved, local_appdata=local_appdata)
+        exe = _find_lively_cli()
+        if exe:
+            try:
+                proc = subprocess.run(
+                    [str(exe), "setwp", "--file", "reload"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if proc.returncode == 0:
+                    return True
+            except (OSError, subprocess.SubprocessError):
+                pass
+        return synced > 0
+
+    if plat == "darwin":
+        if _find_plash_app():
+            try:
+                proc = subprocess.run(["open", "plash:reload"], capture_output=True, text=True, timeout=10)
+                return proc.returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                return False
+    return False
 
 
 def _find_plash_app() -> Path | None:

@@ -489,6 +489,23 @@ def render_display_html(data: dict[str, Any]) -> str:
 
   tick();
   setInterval(tick, 1000);
+
+  // Auto-reload live wallpaper (Lively virtual host / Plash) when plan.json changes on disk.
+  let lastPlan = null;
+  async function checkUpdate() {{
+    try {{
+      const resp = await fetch("plan.json?_=" + Date.now(), {{ cache: "no-store" }});
+      if (!resp.ok) return;
+      const text = await resp.text();
+      if (lastPlan !== null && text !== lastPlan) {{
+        window.location.reload();
+        return;
+      }}
+      lastPlan = text;
+    }} catch (_) {{}}
+  }}
+  checkUpdate();
+  setInterval(checkUpdate, 15000);
 }})();
 </script>
 </body>

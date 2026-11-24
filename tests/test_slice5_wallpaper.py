@@ -26,6 +26,7 @@ from src.wallpaper import (
     parse_size,
     parse_time_hhmm,
     refresh_screen,
+    reload_live_wallpaper,
     render_macos_launchd_plist,
     render_windows_task_xml,
     setup_live_wallpaper,
@@ -194,9 +195,11 @@ class TestSlice5Wallpaper(unittest.TestCase):
                 applies.append(Path(image_path))
                 return Path(image_path)
 
+            reloads: list[Path] = []
             with (
                 mock.patch("src.wallpaper.refresh.capture_static_screenshot", side_effect=fake_capture),
                 mock.patch("src.wallpaper.refresh.apply_lock_screen", side_effect=fake_apply),
+                mock.patch("src.wallpaper.refresh.reload_live_wallpaper", side_effect=lambda p, **kw: reloads.append(Path(p)) or True),
             ):
                 first = refresh_screen(plan, self.config, output_dir=out_dir, size=(1920, 1080), if_changed=True)
                 second = refresh_screen(plan, self.config, output_dir=out_dir, size=(1920, 1080), if_changed=True)
@@ -216,6 +219,46 @@ class TestSlice5Wallpaper(unittest.TestCase):
             self.assertTrue(third.changed)
             self.assertEqual(len(shots), 2)
             self.assertEqual(len(applies), 2)
+            self.assertEqual(len(reloads), 2)
+
+    def test_reload_live_wallpaper_syncs_lively_library_and_reloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out_dir = root / "output"
+            out_dir.mkdir()
+            fresh_html = out_dir / "index.html"
+            fresh_plan = out_dir / "plan.json"
+            fresh_html.write_text('<main aria-label="Academic Study Countdown">NEW</main>', encoding="utf-8")
+            fresh_plan.write_text('{"v": 2}', encoding="utf-8")
+
+            # Fake Lively Library containing one Countdown wallpaper copy and one unrelated wallpaper.
+            appdata = root / "LocalAppData"
+            wp_ours = appdata / "Lively Wallpaper" / "Library" / "wallpapers" / "abc123"
+            wp_other = appdata / "Lively Wallpaper" / "Library" / "wallpapers" / "other999"
+            wp_ours.mkdir(parents=True)
+            wp_other.mkdir(parents=True)
+            (wp_ours / "index.html").write_text('<main aria-label="Academic Study Countdown">OLD</main>', encoding="utf-8")
+            (wp_other / "index.html").write_text("<main>Some Other Wallpaper</main>", encoding="utf-8")
+
+            with (
+                mock.patch("src.wallpaper.apply._find_lively_cli", return_value=Path("livelycu.exe")),
+                mock.patch("src.wallpaper.apply.subprocess.run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run_mock,
+            ):
+                ok = reload_live_wallpaper(fresh_html, platform="win32", local_appdata=appdata)
+
+            self.assertTrue(ok)
+            self.assertEqual(run_mock.call_args[0][0], ["livelycu.exe", "setwp", "--file", "reload"])
+            self.assertIn("NEW", (wp_ours / "index.html").read_text(encoding="utf-8"))
+            self.assertEqual((wp_ours / "plan.json").read_text(encoding="utf-8"), '{"v": 2}')
+            self.assertEqual((wp_other / "index.html").read_text(encoding="utf-8"), "<main>Some Other Wallpaper</main>")
+
+            # macOS calls `open plash:reload` when Plash.app exists.
+            with (
+                mock.patch("src.wallpaper.apply._find_plash_app", return_value=Path("/Applications/Plash.app")),
+                mock.patch("src.wallpaper.apply.subprocess.run", return_value=subprocess.CompletedProcess([], 0, "", "")) as mac_run,
+            ):
+                self.assertTrue(reload_live_wallpaper(fresh_html, platform="darwin"))
+            self.assertEqual(mac_run.call_args[0][0], ["open", "plash:reload"])
 
 
 if __name__ == "__main__":
