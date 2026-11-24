@@ -493,6 +493,17 @@ class TestV2Slice3Voice(unittest.TestCase):
         self.assertTrue(
             any("1 paper, 20 pages" in t.get("title", "") for t in paper_task_svc.tasks_by_list[paper_list_id])
         )
+        # Fractional paper counts ("half a paper" -> papers=0.5) validate cleanly.
+        half_paper = parse_audio_action(
+            self.sample_wav,
+            today=date(2026, 11, 24),
+            calendars={"personal": "Kai Nath", "university": "IU"},
+            open_tasks=[],
+            targets=self.config["targets"],
+            call_gemini=lambda *a, **kw: json.dumps({"action": "log_progress", "target_id": "ethics-essay", "papers": 0.5}),
+        )
+        self.assertIsInstance(half_paper, LogProgressAction)
+        self.assertEqual((half_paper.papers, half_paper.is_reading), (0.5, True))
 
     def test_local_os_tts_commands_and_schedule_isolation(self) -> None:
         tricky = "Moved NLP to Dec 2; $(calc.exe) 'quoted'"
