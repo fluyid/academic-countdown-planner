@@ -68,6 +68,8 @@ def _print_replan_result(res) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(prog="countdown-planner")
     sub = parser.add_subparsers(dest="command", required=True)
+    setup = sub.add_parser("setup", help="Interactive first-time setup wizard (or --check to verify your environment).")
+    setup.add_argument("--check", action="store_true", help="Only check prerequisites without prompting or modifying files.")
     cal = sub.add_parser("check-calendar", help="Print the next N upcoming Calendar events.")
     cal.add_argument("-n", "--count", type=int, default=10)
     sub.add_parser("plan", help="Print the pure-Python study plan through the exam window.")
@@ -140,7 +142,11 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        if args.command == "check-calendar":
+        if args.command == "setup":
+            from src.setup_wizard import run_setup_wizard
+
+            return run_setup_wizard(check_only=args.check)
+        elif args.command == "check-calendar":
             events = get_upcoming_events(max_results=args.count)
             for idx, ev in enumerate(events, 1):
                 print(f"{idx:2d}. {format_event_line(ev)}")
