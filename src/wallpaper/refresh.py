@@ -11,7 +11,7 @@ from typing import Any
 
 from src.display import DEFAULT_OUTPUT_DIR, write_display
 from src.planner.models import StudyPlan
-from src.wallpaper.apply import apply_lock_screen
+from src.wallpaper.apply import apply_lock_screen, reload_live_wallpaper
 from src.wallpaper.capture import DEFAULT_SCREENSHOT_NAME, capture_static_screenshot, detect_screen_resolution
 
 HASH_FILENAME = ".display_hash"
@@ -82,6 +82,8 @@ def refresh_screen(
     hash_path.write_text(fingerprint + "\n", encoding="utf-8")
 
     applied_path = apply_lock_screen(screenshot_path, platform=platform) if apply else None
+    if apply:
+        reload_live_wallpaper(display_out.html_path, platform=platform)
     return RefreshResult(
         html_path=display_out.html_path,
         screenshot_path=screenshot_path,

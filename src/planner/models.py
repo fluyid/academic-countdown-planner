@@ -51,6 +51,16 @@ class TargetSummary:
     required: float
     reading_scheduled: float = 0.0
     reading_required: float = 0.0
+    paper_count: int = 0
+    units_per_paper: float = 0.0
+
+    @property
+    def is_paper_only(self) -> bool:
+        return (
+            self.paper_count > 0
+            and self.units_per_paper > EPS
+            and abs(self.required - self.reading_required) < EPS
+        )
 
 
 @dataclass

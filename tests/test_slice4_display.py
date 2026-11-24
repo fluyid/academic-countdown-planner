@@ -21,12 +21,13 @@ from src.display import (
     render_display_html,
     write_display,
 )
-from src.planner import build_plan, load_config
+from src.planner import build_plan
+from tests.test_slice2_planner import baseline_config
 
 
 class TestSlice4Display(unittest.TestCase):
     def setUp(self) -> None:
-        self.config = load_config()
+        self.config = baseline_config()
 
     def test_concrete_dates_and_no_t_minus_labels(self) -> None:
         plan = build_plan(self.config, [], start_date=date(2026, 11, 20))
@@ -230,7 +231,30 @@ class TestSlice4Display(unittest.TestCase):
             self.assertEqual(res.html_path.name, "index.html")
             saved_json = json.loads(res.data_path.read_text(encoding="utf-8"))
             self.assertEqual(saved_json["countdown"]["target_iso"], "2026-12-14")
-            self.assertIn("<!DOCTYPE html>", res.html_path.read_text(encoding="utf-8"))
+            html_text = res.html_path.read_text(encoding="utf-8")
+            self.assertIn("<!DOCTYPE html>", html_text)
+            self.assertIn("plan_version.js", html_text)
+            ver_js = (out_dir / "plan_version.js").read_text(encoding="utf-8")
+            self.assertIn("window.__PLAN_VERSION__ =", ver_js)
+
+    def test_paper_only_assignments_display_papers_instead_of_units(self) -> None:
+        cfg = copy.deepcopy(self.config)
+        for t in cfg["targets"]:
+            if t["id"] in ("ethics-essay", "cv-assignment"):
+                t["date"] = "2026-12-18"
+                t["units"] = 0
+        plan = build_plan(cfg, [], start_date=date(2026, 11, 20))
+        completed = {"ethics-essay:reading": 0.5, "cv-assignment:reading": 1.0}
+        data = build_display_data(plan, cfg, today=date(2026, 12, 5), completed_units=completed)
+        by_name = {m["name"]: m for m in data["milestones"]}
+        self.assertEqual(by_name["Ethics Essay"]["progress_label"], "1/4 papers")
+        self.assertEqual(by_name["Ethics Essay"]["percent"], 25)
+        self.assertEqual(by_name["Computer Vision Assignment"]["progress_label"], "2/3 papers")
+        self.assertEqual(by_name["Computer Vision Assignment"]["percent"], 67)
+        # Exams stay in units.
+        self.assertEqual(by_name["Introduction to NLP"]["progress_label"], "0/5 units")
+        # Today's panel for paper-only reading day shows papers + pages.
+        self.assertIn("papers", data["today"]["items"][0]["units"] + data["today"]["items"][0]["progress"])
 
 
 if __name__ == "__main__":

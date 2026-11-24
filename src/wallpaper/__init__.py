@@ -1,6 +1,12 @@
 """Lock-screen screenshot capture, OS wallpaper application, and refresh scheduling."""
 
-from src.wallpaper.apply import LiveWallpaperResult, apply_lock_screen, build_windows_lockscreen_script, setup_live_wallpaper
+from src.wallpaper.apply import (
+    LiveWallpaperResult,
+    apply_lock_screen,
+    build_windows_lockscreen_script,
+    reload_live_wallpaper,
+    setup_live_wallpaper,
+)
 from src.wallpaper.capture import (
     DEFAULT_RESOLUTION,
     DEFAULT_SCREENSHOT_NAME,
@@ -47,6 +53,7 @@ __all__ = [
     "parse_size",
     "parse_time_hhmm",
     "refresh_screen",
+    "reload_live_wallpaper",
     "render_macos_launchd_plist",
     "render_schedule_definition",
     "render_windows_task_xml",

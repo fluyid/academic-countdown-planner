@@ -51,6 +51,17 @@ def classify_days(
             if exam_day in intervals_by_day:
                 blocked_reason.setdefault(exam_day, f"exam: {target['name']}")
 
+    for rng in rules.get("blocked_date_ranges", []):
+        if not isinstance(rng, dict) or not rng.get("start") or not rng.get("end"):
+            continue
+        r_start = date.fromisoformat(str(rng["start"]))
+        r_end = date.fromisoformat(str(rng["end"]))
+        label = str(rng.get("label") or "blocked range").strip()
+        cur, stop = max(r_start, start_date), min(r_end, end_date)
+        while cur <= stop:
+            blocked_reason.setdefault(cur, label)
+            cur += timedelta(days=1)
+
     for ev in events:
         if ev.get("status") == "cancelled":
             continue

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from src.planner.formatter import format_pages, format_unit_ratio, format_units
+from src.planner.formatter import format_pages, format_paper_ratio, format_papers, format_unit_ratio, format_units
 from src.planner.models import Allocation, DayPlan, EPS, StudyPlan, TargetSummary, reading_target_id
 
 MAX_MILESTONES = 6
@@ -98,11 +98,18 @@ def _pick_countdown(plan: StudyPlan, config: dict[str, Any], today: date) -> dic
     }
 
 
-def _allocation_item(alloc: Allocation) -> dict[str, Any]:
+def _allocation_item(alloc: Allocation, paper_targets: dict[str, TargetSummary] | None = None) -> dict[str, Any]:
     is_optional = alloc.target_id == "paper-reading"
     name = "Optional Paper Reading" if is_optional else alloc.name
-    units = f"{format_units(alloc.units)} ({format_pages(alloc.pages)})" if alloc.pages is not None else format_units(alloc.units)
-    progress = format_unit_ratio(alloc.cumulative, alloc.total) if alloc.total is not None else "Optional"
+    pt = (paper_targets or {}).get(alloc.target_id)
+    if pt is not None and alloc.total is not None:
+        p_take = round(alloc.units / pt.units_per_paper, 4)
+        p_cum = round(alloc.cumulative / pt.units_per_paper, 4)
+        units = f"{format_papers(p_take)} ({format_pages(alloc.pages)})" if alloc.pages is not None else format_papers(p_take)
+        progress = format_paper_ratio(p_cum, pt.paper_count)
+    else:
+        units = f"{format_units(alloc.units)} ({format_pages(alloc.pages)})" if alloc.pages is not None else format_units(alloc.units)
+        progress = format_unit_ratio(alloc.cumulative, alloc.total) if alloc.total is not None else "Optional"
     return {
         "name": name,
         "units": units,
@@ -139,13 +146,14 @@ def _build_today(plan: StudyPlan, today: date, completed_days: set[date]) -> dic
         kind = "Free day" if day_plan.day_type == "free" else "Class day"
         badge = f"{kind} \u00b7 {format_units(day_plan.capacity)}"
         detail = day_plan.reason if day_plan.day_type == "class" and day_plan.reason else ""
+        paper_targets = {reading_target_id(t.target_id): t for t in plan.targets if t.is_paper_only}
         return {
             **base,
             "status": "study",
             "badge": badge,
             "headline": "",
             "detail": detail,
-            "items": [_allocation_item(a) for a in day_plan.allocations],
+            "items": [_allocation_item(a, paper_targets) for a in day_plan.allocations],
         }
     if day_plan.day_type == "blocked":
         return {
@@ -176,12 +184,16 @@ def _build_milestones(
         )
         req = round(max(0.0, float(t.required)), 4)
         pct = min(100, round((done / req) * 100)) if req > EPS else 0
+        if t.is_paper_only:
+            progress_label = format_paper_ratio(round(done / t.units_per_paper, 4), t.paper_count)
+        else:
+            progress_label = format_unit_ratio(done, req) if req > EPS else "Open"
         milestones.append(
             {
                 "name": t.name,
                 "kind": "Exam" if t.target_type == "exam" else "Assignment",
                 "date_label": format_short_date(t.due_date) if t.due_date else "Date TBD",
-                "progress_label": format_unit_ratio(done, req) if req > EPS else "Open",
+                "progress_label": progress_label,
                 "percent": pct,
                 "done": req > EPS and done + EPS >= req,
             }
@@ -191,8 +203,13 @@ def _build_milestones(
 
 def _status_note(plan: StudyPlan) -> str | None:
     if plan.unscheduled:
-        shortfall = ", ".join(f"{name} ({format_units(u)})" for name, u in plan.unscheduled.items())
-        return f"Tight schedule \u00b7 Unscheduled: {shortfall}"
+        paper_by_name = {t.name: t for t in plan.targets if t.is_paper_only}
+        parts = []
+        for name, u in plan.unscheduled.items():
+            pt = paper_by_name.get(name)
+            amt = format_papers(round(u / pt.units_per_paper, 4)) if pt is not None else format_units(u)
+            parts.append(f"{name} ({amt})")
+        return f"Tight schedule \u00b7 Unscheduled: {', '.join(parts)}"
     if plan.optional_shed:
         return "Tight schedule \u00b7 Optional reading paused"
     return None

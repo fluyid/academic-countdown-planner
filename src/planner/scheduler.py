@@ -256,20 +256,26 @@ def build_plan(
                 ),
             )
 
-    summaries = [
-        TargetSummary(
-            target_id=t["id"],
-            name=t["name"],
-            target_type=t.get("type", "assignment"),
-            priority=int(t.get("priority", 2)),
-            due_date=date.fromisoformat(t["date"]) if t.get("date") else None,
-            scheduled=scheduled_by_id.get(t["id"], 0.0),
-            required=required_by_id.get(t["id"], 0.0),
-            reading_scheduled=reading_scheduled_by_id.get(t["id"], 0.0),
-            reading_required=reading_required_by_id.get(t["id"], 0.0),
+    summaries = []
+    for _, t in targets:
+        spec = t.get("required_papers")
+        p_count = int(spec.get("count") or 0) if isinstance(spec, dict) else 0
+        _, p_units = _required_paper_spec(t, pages_per_unit)
+        summaries.append(
+            TargetSummary(
+                target_id=t["id"],
+                name=t["name"],
+                target_type=t.get("type", "assignment"),
+                priority=int(t.get("priority", 2)),
+                due_date=date.fromisoformat(t["date"]) if t.get("date") else None,
+                scheduled=scheduled_by_id.get(t["id"], 0.0),
+                required=required_by_id.get(t["id"], 0.0),
+                reading_scheduled=reading_scheduled_by_id.get(t["id"], 0.0),
+                reading_required=reading_required_by_id.get(t["id"], 0.0),
+                paper_count=p_count if p_units > EPS else 0,
+                units_per_paper=p_units,
+            )
         )
-        for _, t in targets
-    ]
     return StudyPlan(
         start_date=start,
         end_date=end,

@@ -2,9 +2,12 @@
 
 from src.gemini.actions import (
     AddEventAction,
+    LogProgressAction,
     ParsedAction,
+    TargetDateUpdate,
     TickTaskAction,
     UnclearAction,
+    UpdateTargetDatesAction,
     parse_audio_action,
     parse_user_action,
 )
@@ -30,10 +33,13 @@ __all__ = [
     "MAX_AUDIO_BYTES",
     "MAX_OUTPUT_TOKENS_CAP",
     "AddEventAction",
+    "LogProgressAction",
     "ParsedAction",
     "ReplanResult",
+    "TargetDateUpdate",
     "TickTaskAction",
     "UnclearAction",
+    "UpdateTargetDatesAction",
     "check_and_increment_usage",
     "explain_replan",
     "generate_content",

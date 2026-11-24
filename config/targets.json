@@ -42,8 +42,8 @@
       "id": "ethics-essay",
       "type": "assignment",
       "name": "Ethics Essay",
-      "date": null,
-      "units": null,
+      "date": "2026-12-18",
+      "units": 0,
       "priority": 2,
       "required_papers": {
         "count": 4,
@@ -54,8 +54,8 @@
       "id": "cv-assignment",
       "type": "assignment",
       "name": "Computer Vision Assignment",
-      "date": null,
-      "units": null,
+      "date": "2026-12-18",
+      "units": 0,
       "priority": 2,
       "required_papers": {
         "count": 3,
@@ -75,7 +75,18 @@
     "class_day_max_hours": 3.5,
     "class_day_units": 0.25,
     "blocked_day_units": 0.0,
-    "blocked_keywords": ["trip", "exam", "date"],
+    "blocked_keywords": [
+      "trip",
+      "exam",
+      "date"
+    ],
+    "blocked_date_ranges": [
+      {
+        "start": "2026-12-07",
+        "end": "2026-12-18",
+        "label": "Exam period"
+      }
+    ],
     "max_reading_pages_per_day": 40,
     "pages_per_unit": 40
   }

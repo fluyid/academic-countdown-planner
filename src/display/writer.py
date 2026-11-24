@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from src.display.model import MAX_MILESTONES, build_display_data
-from src.display.template import render_display_html
+from src.display.template import plan_version, render_display_html
 from src.planner.models import StudyPlan
 
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent.parent.parent / "output"
@@ -46,6 +46,8 @@ def write_display(
     output_dir.mkdir(parents=True, exist_ok=True)
     html_path = output_dir / "index.html"
     data_path = output_dir / "plan.json"
+    version_path = output_dir / "plan_version.js"
     html_path.write_text(html_doc, encoding="utf-8")
     data_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    version_path.write_text(f"window.__PLAN_VERSION__ = {json.dumps(plan_version(data))};\n", encoding="utf-8")
     return DisplayOutput(html_path=html_path, data_path=data_path, data=data)

@@ -11,6 +11,17 @@ from src.calendar_client import get_events_in_window
 from src.planner import build_plan, classify_days, format_plan, format_unit_ratio, format_units, load_config
 
 
+def baseline_config() -> dict:
+    """Stable test fixture decoupled from user edits to dates/units/blackouts in config/targets.json."""
+    cfg = copy.deepcopy(load_config())
+    for t in cfg.get("targets", []):
+        if t.get("id") in ("ethics-essay", "cv-assignment"):
+            t["date"] = None
+            t["units"] = None
+    cfg.get("capacity_rules", {}).pop("blocked_date_ranges", None)
+    return cfg
+
+
 def _timed(summary: str, start: str, end: str, **extra) -> dict:
     return {"summary": summary, "start": {"dateTime": start}, "end": {"dateTime": end}, **extra}
 
@@ -24,7 +35,37 @@ def _all_day(summary: str, start: str, end: str | None = None, **extra) -> dict:
 
 class TestSlice2Planner(unittest.TestCase):
     def setUp(self) -> None:
-        self.config = load_config()
+        self.config = baseline_config()
+
+    def test_zero_unit_assignments_schedule_only_required_papers(self) -> None:
+        cfg = copy.deepcopy(self.config)
+        for t in cfg["targets"]:
+            if t["id"] in ("ethics-essay", "cv-assignment"):
+                t["date"] = "2026-12-18"
+                t["units"] = 0
+        plan = build_plan(cfg, [], start_date=date(2026, 11, 24))
+        self._assert_capacity_invariants(plan)
+        by_id = {t.target_id: t for t in plan.targets}
+        self.assertEqual((by_id["ethics-essay"].required, by_id["ethics-essay"].reading_required), (2.0, 2.0))
+        self.assertEqual((by_id["cv-assignment"].required, by_id["cv-assignment"].reading_required), (1.5, 1.5))
+        # Zero non-reading study allocations for either writing assignment.
+        for d in plan.days:
+            for a in d.allocations:
+                if a.target_id in ("ethics-essay", "cv-assignment"):
+                    self.fail(f"Unexpected extra study day for {a.target_id} on {d.day}")
+
+    def test_blocked_date_ranges_blackout_exam_period(self) -> None:
+        cfg = copy.deepcopy(load_config())
+        plan = build_plan(cfg, [_all_day("Dinner", "2026-11-29")], start_date=date(2026, 11, 24))
+        self._assert_capacity_invariants(plan)
+        blackout_days = [d for d in plan.days if date(2026, 12, 7) <= d.day <= date(2026, 12, 18)]
+        self.assertEqual(len(blackout_days), 12)
+        for d in blackout_days:
+            self.assertEqual(d.day_type, "blocked")
+            self.assertEqual(d.capacity, 0.0)
+            self.assertEqual(d.allocations, [])
+        # Shortfall is surfaced explicitly instead of overflowing into Dec 7-18.
+        self.assertTrue(plan.unscheduled)
 
     def _assert_capacity_invariants(self, plan, max_reading_pages: float = 40.0) -> None:
         for d in plan.days:

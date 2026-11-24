@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -10,18 +11,22 @@ from typing import Any, Callable
 from src.calendar_client import CONFIG_PATH, create_calendar_event, get_calendar_service, get_events_in_window
 from src.gemini.actions import (
     AddEventAction,
+    LogProgressAction,
     ParsedAction,
     TickTaskAction,
     UnclearAction,
-    parse_audio_action,
+    UpdateTargetDatesAction,
+    parse_audio_action_with_transcript,
     parse_user_action,
 )
 from src.gemini.client import generate_content
 from src.gemini.explain import explain_replan
-from src.planner import StudyPlan, build_plan, load_config, plan_window
+from src.planner import StudyPlan, build_plan, format_papers, format_units, load_config, plan_window
 from src.tasks import (
     SyncResult,
+    build_progress_log_body,
     complete_task,
+    create_task,
     get_or_create_tasklist,
     get_tasks_service,
     list_tasks,
@@ -42,6 +47,7 @@ class ReplanResult:
     before_plan: StudyPlan
     after_plan: StudyPlan
     explanation: str
+    transcript: str | None = None
 
 
 def _format_event_summary(action: AddEventAction, created: dict[str, Any]) -> str:
@@ -60,7 +66,7 @@ def _format_event_summary(action: AddEventAction, created: dict[str, Any]) -> st
 
 
 def _replan(
-    parse_action: Callable[[date, dict[str, str], list[dict[str, Any]]], ParsedAction],
+    parse_action: Callable[[date, dict[str, str], list[dict[str, Any]], list[dict[str, Any]]], tuple[ParsedAction, str | None]],
     *,
     config_path: Path = CONFIG_PATH,
     list_name: str | None = None,
@@ -93,7 +99,7 @@ def _replan(
     )
 
     open_tasks = [t for t in tasks_before if t.get("status") != "completed" and t.get("id")]
-    action = parse_action(ref_day, config.get("calendars", {}), open_tasks)
+    action, transcript = parse_action(ref_day, config.get("calendars", {}), open_tasks, config.get("targets", []))
 
     if isinstance(action, UnclearAction):
         return ReplanResult(
@@ -106,6 +112,7 @@ def _replan(
             before_plan=before_plan,
             after_plan=before_plan,
             explanation=action.reason,
+            transcript=transcript,
         )
 
     created_event: dict[str, Any] | None = None
@@ -129,6 +136,68 @@ def _replan(
         ticked_task = {"id": action.task_id, "title": action.task_title, "due": action.task_due}
         due_part = f" (due {action.task_due})" if action.task_due else ""
         action_summary = f"Ticked task: '{action.task_title}'{due_part}."
+    elif isinstance(action, LogProgressAction):
+        pages_per_unit = float(config.get("capacity_rules", {}).get("pages_per_unit", 40.0))
+        if action.papers is not None:
+            target_cfg = next((t for t in config.get("targets", []) if t.get("id") == action.target_id), {})
+            pages_per_paper = float((target_cfg.get("required_papers") or {}).get("pages_per_paper") or 20.0)
+            logged_units = round((action.papers * pages_per_paper) / pages_per_unit, 4)
+            amount_label = format_papers(action.papers)
+        else:
+            logged_units = float(action.units or 0.0)
+            amount_label = format_units(logged_units)
+        log_body = build_progress_log_body(
+            ref_day,
+            action.target_id,
+            action.target_name,
+            logged_units,
+            is_reading=action.is_reading,
+            papers=action.papers,
+            pages_per_unit=pages_per_unit,
+        )
+        created_log = create_task(task_svc, tasklist_id, log_body)
+        complete_task(task_svc, tasklist_id, created_log["id"])
+        ticked_task = {"id": created_log["id"], "title": log_body["title"], "due": ref_day.isoformat()}
+        action_summary = f"Logged completed progress: {action.target_name} ({amount_label})."
+    elif isinstance(action, UpdateTargetDatesAction):
+        by_id = {u.target_id: u for u in action.updates}
+        target_types: dict[str, str] = {}
+        for target in config.get("targets", []):
+            upd = by_id.get(target.get("id"))
+            if upd is not None:
+                target["date"] = upd.due_date.isoformat()
+                target_types[upd.target_id] = str(target.get("type") or "assignment")
+        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        # Recompute plan window so deadlines later than the prior anchor (e.g. Dec 18 > Dec 14) are included.
+        start, end = plan_window(config, start_date=ref_day)
+        existing_in_window = get_events_in_window(start, end, config_path=config_path, service=cal_svc)
+        existing_keys = {
+            ((ev.get("summary") or "").strip().lower(), ev.get("start", {}).get("date"))
+            for ev in existing_in_window
+            if ev.get("status") != "cancelled"
+        }
+        for upd in action.updates:
+            is_exam = target_types.get(upd.target_id) == "exam"
+            ev_summary = (
+                upd.target_name
+                if (is_exam and "exam" in upd.target_name.lower())
+                else (f"{upd.target_name} Exam" if is_exam else f"{upd.target_name} Due")
+            )
+            key = (ev_summary.lower(), upd.due_date.isoformat())
+            if key not in existing_keys:
+                # Assignments use transparent all-day events so the deadline appears on IU without blocking study capacity.
+                created_event = create_calendar_event(
+                    ev_summary,
+                    upd.due_date,
+                    all_day=True,
+                    calendar_role="university",
+                    transparency=None if is_exam else "transparent",
+                    config_path=config_path,
+                    service=cal_svc,
+                )
+                existing_keys.add(key)
+        parts = [f"{u.target_name} -> {u.due_date.isoformat()}" for u in action.updates]
+        action_summary = f"Updated target dates (config + university calendar): {', '.join(parts)}."
     else:  # pragma: no cover - exhaustive guard
         raise ValueError(f"Unsupported action: {action!r}")
 
@@ -166,6 +235,7 @@ def _replan(
         before_plan=before_plan,
         after_plan=after_plan,
         explanation=explanation,
+        transcript=transcript,
     )
 
 
@@ -183,8 +253,16 @@ def replan_from_text(
     refresh_fn: Callable[..., RefreshResult] = refresh_screen,
 ) -> ReplanResult:
     return _replan(
-        lambda ref_day, cals, open_tasks: parse_user_action(
-            utterance, today=ref_day, calendars=cals, open_tasks=open_tasks, call_gemini=call_gemini
+        lambda ref_day, cals, open_tasks, targets: (
+            parse_user_action(
+                utterance,
+                today=ref_day,
+                calendars=cals,
+                open_tasks=open_tasks,
+                targets=targets,
+                call_gemini=call_gemini,
+            ),
+            None,
         ),
         config_path=config_path,
         list_name=list_name,
@@ -215,11 +293,12 @@ def replan_from_audio(
     if not audio_bytes:
         raise ValueError("Audio clip is empty.")
     return _replan(
-        lambda ref_day, cals, open_tasks: parse_audio_action(
+        lambda ref_day, cals, open_tasks, targets: parse_audio_action_with_transcript(
             audio_bytes,
             today=ref_day,
             calendars=cals,
             open_tasks=open_tasks,
+            targets=targets,
             audio_mime_type=audio_mime_type,
             call_gemini=call_gemini,
         ),

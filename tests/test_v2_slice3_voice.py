@@ -21,8 +21,10 @@ from src.gemini import (
     DEFAULT_MODEL,
     MAX_AUDIO_BYTES,
     AddEventAction,
+    LogProgressAction,
     TickTaskAction,
     UnclearAction,
+    UpdateTargetDatesAction,
     generate_content,
     parse_audio_action,
     replan_from_audio,
@@ -44,6 +46,7 @@ from src.voice import (
     speak_text,
 )
 from src.wallpaper import RefreshResult, render_schedule_definition
+from tests.test_slice2_planner import baseline_config
 from tests.test_slice3_tasks import FakeTasksService
 from tests.test_slice6_gemini import FakeCalendarService, _FakeResp
 
@@ -75,7 +78,7 @@ class _FakeRawInputStream:
 
 class TestV2Slice3Voice(unittest.TestCase):
     def setUp(self) -> None:
-        self.config = load_config()
+        self.config = baseline_config()
         self.sample_wav = pcm_to_wav_bytes(_pcm_chunk(2000, frames=1600))
 
     def test_generate_content_audio_inline_data_and_guardrails(self) -> None:
@@ -329,6 +332,187 @@ class TestV2Slice3Voice(unittest.TestCase):
         self.assertEqual(unclear_calls, 1)
         self.assertEqual(len(cal_svc.inserted), cal_count_before)
         self.assertIsNone(res_unclear.sync_result)
+
+        # 4. Combined target due-date update via audio (Ethics Essay + CV Assignment -> Dec 17)
+        #    updates targets.json, extends plan_window through Dec 17, syncs Tasks, and refreshes screen.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_copy = Path(tmp) / "targets.json"
+            cfg_copy.write_text(json.dumps(self.config, indent=2), encoding="utf-8")
+            seen_prompts: list[str] = []
+
+            def fake_gemini_dates(prompt: str, **kwargs) -> str:
+                seen_prompts.append(prompt)
+                if len(seen_prompts) == 1:
+                    return json.dumps({
+                        "action": "update_target_dates",
+                        "target_updates": [
+                            {"target_id": "ethics-essay", "date": "2026-12-17"},
+                            {"target_id": "cv-assignment", "date": "2026-12-17"},
+                        ],
+                    })
+                return "Updated Ethics Essay and Computer Vision Assignment due dates to Dec 17."
+
+            res_dates = replan_from_audio(
+                self.sample_wav,
+                config_path=cfg_copy,
+                today=date(2026, 11, 24),
+                apply_lock_screen=False,
+                calendar_service=cal_svc,
+                tasks_service=task_svc,
+                call_gemini=fake_gemini_dates,
+                refresh_fn=fake_refresh,
+            )
+            self.assertIsInstance(res_dates.action, UpdateTargetDatesAction)
+            self.assertIn("CONFIGURED TARGETS:", seen_prompts[0])
+            self.assertIn("ethics-essay", seen_prompts[0])
+            self.assertEqual(res_dates.after_plan.end_date, date(2026, 12, 17))
+            saved = json.loads(cfg_copy.read_text(encoding="utf-8"))
+            saved_dates = {t["id"]: t["date"] for t in saved["targets"]}
+            self.assertEqual(saved_dates["ethics-essay"], "2026-12-17")
+            self.assertEqual(saved_dates["cv-assignment"], "2026-12-17")
+            self.assertIn("Ethics Essay -> 2026-12-17", res_dates.action_summary)
+            self.assertIn("Computer Vision Assignment -> 2026-12-17", res_dates.action_summary)
+            # Transparent all-day Due events are added to the university (IU) calendar without blocking Dec 17.
+            uni_due = [body for cid, body in cal_svc.inserted if cid == "cal-uni"]
+            self.assertEqual(
+                {(b["summary"], b["start"]["date"], b.get("transparency")) for b in uni_due},
+                {
+                    ("Ethics Essay Due", "2026-12-17", "transparent"),
+                    ("Computer Vision Assignment Due", "2026-12-17", "transparent"),
+                },
+            )
+            dec17 = next(d for d in res_dates.after_plan.days if d.day == date(2026, 12, 17))
+            self.assertEqual(dec17.day_type, "free")
+
+            # Repeating the same update does not create duplicate calendar events.
+            before_ins = len(cal_svc.inserted)
+            seen_prompts.clear()
+            replan_from_audio(
+                self.sample_wav,
+                config_path=cfg_copy,
+                today=date(2026, 11, 24),
+                apply_lock_screen=False,
+                calendar_service=cal_svc,
+                tasks_service=task_svc,
+                call_gemini=fake_gemini_dates,
+                refresh_fn=fake_refresh,
+            )
+            self.assertEqual(len(cal_svc.inserted), before_ins)
+
+        # Hallucinated target_id must be rejected as UnclearAction (never writes config).
+        bad_target = parse_audio_action(
+            self.sample_wav,
+            today=date(2026, 11, 24),
+            calendars={"personal": "Kai Nath", "university": "IU"},
+            open_tasks=[],
+            targets=self.config["targets"],
+            call_gemini=lambda *a, **kw: json.dumps({
+                "action": "update_target_dates",
+                "target_updates": [{"target_id": "nonexistent-essay", "date": "2026-12-17"}],
+            }),
+        )
+        self.assertIsInstance(bad_target, UnclearAction)
+
+        # 5. Partial/custom progress logging via audio (e.g. "finished 0.75 units of Linear Algebra")
+        #    logs a completed task in Google Tasks without consuming today, updating progress cleanly.
+        log_task_svc = FakeTasksService()
+        log_list_id = get_or_create_tasklist(log_task_svc, "Countdown Planner (Test)")
+        log_replies = iter([
+            json.dumps({
+                "action": "log_progress",
+                "target_id": "linear-algebra-exam",
+                "units": 0.75,
+                "is_reading": False,
+            }),
+            "Logged 0.75 units of Linear Algebra; 4.25 units remain.",
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_log = Path(tmp) / "targets.json"
+            cfg_log.write_text(json.dumps(self.config, indent=2), encoding="utf-8")
+            res_log = replan_from_audio(
+                self.sample_wav,
+                config_path=cfg_log,
+                today=date(2026, 11, 24),
+                apply_lock_screen=False,
+                calendar_service=FakeCalendarService(),
+                tasks_service=log_task_svc,
+                call_gemini=lambda *a, **kw: next(log_replies),
+                refresh_fn=fake_refresh,
+            )
+        self.assertIsInstance(res_log.action, LogProgressAction)
+        self.assertEqual(res_log.action.units, 0.75)
+        self.assertIn("Linear Algebra (0.75 units)", res_log.action_summary)
+        self.assertEqual(res_log.sync_result.completed_preserved, 1)
+        # Today (Nov 24) still gets scheduled because consume_day=False, while LA remaining drops by 0.75.
+        self.assertTrue(res_log.after_plan.days[0].allocations)
+        la_allocs = [a.units for d in res_log.after_plan.days for a in d.allocations if a.target_id == "linear-algebra-exam"]
+        self.assertAlmostEqual(sum(la_allocs), 4.25, places=4)
+        self.assertTrue(
+            any(t.get("status") == "completed" and "0.75 units" in t.get("title", "") for t in log_task_svc.tasks_by_list[log_list_id])
+        )
+
+        # Invalid/hallucinated log_progress target_id or non-positive units are rejected safely.
+        bad_log = parse_audio_action(
+            self.sample_wav,
+            today=date(2026, 11, 24),
+            calendars={"personal": "Kai Nath", "university": "IU"},
+            open_tasks=[],
+            targets=self.config["targets"],
+            call_gemini=lambda *a, **kw: json.dumps({"action": "log_progress", "target_id": "linear-algebra-exam", "units": -1}),
+        )
+        self.assertIsInstance(bad_log, UnclearAction)
+
+        # 6. Paper-count progress logging ("I read 1 paper for Ethics Essay") converts 1 paper -> 0.5 units in pure Python.
+        paper_task_svc = FakeTasksService()
+        paper_list_id = get_or_create_tasklist(paper_task_svc, "Countdown Planner (Test)")
+        paper_replies = iter([
+            json.dumps({
+                "transcript": "I finished one paper for Ethics Essay",
+                "action": "log_progress",
+                "target_id": "ethics-essay",
+                "papers": 1,
+                "is_reading": True,
+            }),
+            "Logged 1 paper for Ethics Essay; 3 papers remain.",
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_p = Path(tmp) / "targets.json"
+            p_cfg = json.loads(json.dumps(self.config))
+            for t in p_cfg["targets"]:
+                if t["id"] in ("ethics-essay", "cv-assignment"):
+                    t["date"] = "2026-12-18"
+                    t["units"] = 0
+            cfg_p.write_text(json.dumps(p_cfg, indent=2), encoding="utf-8")
+            res_paper = replan_from_audio(
+                self.sample_wav,
+                config_path=cfg_p,
+                today=date(2026, 11, 24),
+                apply_lock_screen=False,
+                calendar_service=FakeCalendarService(),
+                tasks_service=paper_task_svc,
+                call_gemini=lambda *a, **kw: next(paper_replies),
+                refresh_fn=fake_refresh,
+            )
+        self.assertIsInstance(res_paper.action, LogProgressAction)
+        self.assertEqual(res_paper.transcript, "I finished one paper for Ethics Essay")
+        self.assertEqual(res_paper.action.papers, 1.0)
+        self.assertIn("Ethics Essay (1 paper)", res_paper.action_summary)
+        self.assertTrue(
+            any("1 paper, 20 pages" in t.get("title", "") for t in paper_task_svc.tasks_by_list[paper_list_id])
+        )
+        # Fractional paper counts ("half a paper" -> papers=0.5) validate cleanly even if Gemini sends units=0.
+        half_paper = parse_audio_action(
+            self.sample_wav,
+            today=date(2026, 11, 24),
+            calendars={"personal": "Kai Nath", "university": "IU"},
+            open_tasks=[],
+            targets=self.config["targets"],
+            call_gemini=lambda *a, **kw: json.dumps(
+                {"action": "log_progress", "target_id": "ethics-essay", "papers": 0.5, "units": 0}
+            ),
+        )
+        self.assertIsInstance(half_paper, LogProgressAction)
+        self.assertEqual((half_paper.papers, half_paper.is_reading), (0.5, True))
 
     def test_local_os_tts_commands_and_schedule_isolation(self) -> None:
         tricky = "Moved NLP to Dec 2; $(calc.exe) 'quoted'"
