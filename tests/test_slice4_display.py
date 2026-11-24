@@ -231,7 +231,11 @@ class TestSlice4Display(unittest.TestCase):
             self.assertEqual(res.html_path.name, "index.html")
             saved_json = json.loads(res.data_path.read_text(encoding="utf-8"))
             self.assertEqual(saved_json["countdown"]["target_iso"], "2026-12-14")
-            self.assertIn("<!DOCTYPE html>", res.html_path.read_text(encoding="utf-8"))
+            html_text = res.html_path.read_text(encoding="utf-8")
+            self.assertIn("<!DOCTYPE html>", html_text)
+            self.assertIn("plan_version.js", html_text)
+            ver_js = (out_dir / "plan_version.js").read_text(encoding="utf-8")
+            self.assertIn("window.__PLAN_VERSION__ =", ver_js)
 
 
 if __name__ == "__main__":

@@ -107,7 +107,29 @@ def _find_lively_cli() -> Path | None:
         Path(local) / "Programs/Lively Wallpaper/Lively.exe" if local else None,
         Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Lively Wallpaper/Lively.exe",
     ]
-    return next((p for p in candidates if p and p.is_file()), None)
+    found = next((p for p in candidates if p and p.is_file()), None)
+    if found:
+        return found
+    # Microsoft Store MSIX installs run Lively.exe from WindowsApps; detect via running process.
+    try:
+        proc = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "(Get-Process Lively -ErrorAction SilentlyContinue | Select-Object -First 1).Path",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        raw = (proc.stdout or "").strip()
+        if raw and Path(raw).is_file():
+            return Path(raw)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
 
 
 def _sync_lively_library_copies(html_path: Path, *, local_appdata: Path | None = None) -> int:
@@ -125,11 +147,16 @@ def _sync_lively_library_copies(html_path: Path, *, local_appdata: Path | None =
         )
 
     plan_json = html_path.with_name("plan.json")
+    plan_ver = html_path.with_name("plan_version.js")
     updated = 0
     for root in roots:
-        if not root.is_dir():
+        try:
+            if not root.is_dir():
+                continue
+            entries = list(root.iterdir())
+        except OSError:
             continue
-        for entry in root.iterdir():
+        for entry in entries:
             if not entry.is_dir():
                 continue
             target_html = entry / "index.html"
@@ -144,6 +171,8 @@ def _sync_lively_library_copies(html_path: Path, *, local_appdata: Path | None =
             shutil.copy2(html_path, target_html)
             if plan_json.is_file():
                 shutil.copy2(plan_json, entry / "plan.json")
+            if plan_ver.is_file():
+                shutil.copy2(plan_ver, entry / "plan_version.js")
             updated += 1
     return updated
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import html
 import json
 import mimetypes
@@ -109,6 +110,11 @@ def _render_milestones(milestones: list[dict[str, Any]]) -> str:
     return f'<ul class="milestone-list">{"".join(rows)}</ul>'
 
 
+def plan_version(data: dict[str, Any]) -> str:
+    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
 def render_display_html(data: dict[str, Any]) -> str:
     cd = data["countdown"]
     today = data["today"]
@@ -120,10 +126,11 @@ def render_display_html(data: dict[str, Any]) -> str:
     target_word = "target" if milestone_count == 1 else "targets"
     card_opacity = clamp_card_opacity(data.get("card_opacity"))
     font_faces = _build_font_faces()
+    version = plan_version(data)
 
     # Escape "</" so embedded JSON can never close the <script> tag.
     payload_json = json.dumps(
-        {"target_iso": cd.get("target_iso"), "days_left": cd.get("days_left", 0)},
+        {"target_iso": cd.get("target_iso"), "days_left": cd.get("days_left", 0), "version": version},
         separators=(",", ":"),
     ).replace("</", "<\\/")
 
@@ -490,22 +497,22 @@ def render_display_html(data: dict[str, Any]) -> str:
   tick();
   setInterval(tick, 1000);
 
-  // Auto-reload live wallpaper (Lively virtual host / Plash) when plan.json changes on disk.
-  let lastPlan = null;
-  async function checkUpdate() {{
-    try {{
-      const resp = await fetch("plan.json?_=" + Date.now(), {{ cache: "no-store" }});
-      if (!resp.ok) return;
-      const text = await resp.text();
-      if (lastPlan !== null && text !== lastPlan) {{
+  // Auto-reload live wallpaper via <script> tag (works on file:// URLs where fetch() is CORS-blocked).
+  const currentVersion = data.version || "";
+  function checkUpdate() {{
+    if (!currentVersion) return;
+    const tag = document.createElement("script");
+    tag.src = "plan_version.js?_=" + Date.now();
+    tag.onload = () => {{
+      tag.remove();
+      if (window.__PLAN_VERSION__ && window.__PLAN_VERSION__ !== currentVersion) {{
         window.location.reload();
-        return;
       }}
-      lastPlan = text;
-    }} catch (_) {{}}
+    }};
+    tag.onerror = () => tag.remove();
+    document.head.appendChild(tag);
   }}
-  checkUpdate();
-  setInterval(checkUpdate, 15000);
+  setInterval(checkUpdate, 5000);
 }})();
 </script>
 </body>
