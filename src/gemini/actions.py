@@ -10,7 +10,8 @@ from typing import Any, Callable
 
 from src.gemini.client import generate_content
 
-PARSE_MAX_OUTPUT_TOKENS = 256
+PARSE_MAX_OUTPUT_TOKENS = 320
+AUDIO_PARSE_MODEL = "gemini-3.5-flash"
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ ParsedAction = AddEventAction | TickTaskAction | UpdateTargetDatesAction | LogPr
 ACTION_SCHEMA: dict[str, Any] = {
     "type": "OBJECT",
     "properties": {
+        "transcript": {"type": "STRING", "nullable": True},
         "action": {
             "type": "STRING",
             "enum": ["add_event", "tick_task", "update_target_dates", "log_progress", "unclear"],
@@ -96,29 +98,27 @@ ACTION_SCHEMA: dict[str, Any] = {
 }
 
 _SYSTEM_PROMPT = (
-    "You translate one student utterance into ONE structured action: "
+    "You translate one student utterance (text or audio) into ONE structured action: "
     "'add_event' (add a Google Calendar event such as personal plans, trips, dinners, classes, or seminars), "
     "'tick_task' (mark one exact existing open Google Task from OPEN TASKS completed), "
-    "'log_progress' (log a specific completed amount of units, including partial units like 0.25, 0.5, 0.75, or 1, "
-    "for a target in CONFIGURED TARGETS when the user finished custom/partial progress or studied ahead of schedule), "
+    "'log_progress' (log a specific completed amount of units or papers, including decimals like 0.25, 0.5, 0.75, "
+    "for a target in CONFIGURED TARGETS), "
     "'update_target_dates' (set or change the due/exam date for ONE OR MORE targets in CONFIGURED TARGETS), "
     "or 'unclear' (if ambiguous or none applies). "
-    "Do zero scheduling math. "
-    "For 'log_progress': e.g. 'I finished 0.75 units of Linear Algebra' -> action='log_progress', "
-    "target_id='linear-algebra-exam', units=0.75, is_reading=false; for reading papers set papers to a decimal "
-    "count and is_reading=true (e.g. 'half a paper' -> papers=0.5, 'a paper' / 'one paper' -> papers=1, "
-    "'two papers' -> papers=2; do NOT convert papers to units yourself); choose ONLY an exact target_id from "
-    "CONFIGURED TARGETS and positive units or papers (> 0). "
-    "For 'update_target_dates': whenever the user sets or changes the due date or exam date of any exam or assignment "
-    "listed in CONFIGURED TARGETS (even multiple in one sentence, e.g. 'my Ethics Essay and Computer Vision assignment "
-    "are due Dec 17'), return action='update_target_dates' with one {target_id, date} item per matching target "
-    "using ONLY exact target_id values from CONFIGURED TARGETS and YYYY-MM-DD dates; if none matches, return 'unclear'. "
-    "For 'add_event': use YYYY-MM-DD dates; set all_day=true whenever no specific clock hours are given "
-    "(e.g. 'I have plans on the 28th' -> all_day=true, summary='Plans', calendar='personal'); "
-    "for timed events use 24-hour HH:MM start_time and end_time; use calendar='university' for classes/exams "
-    "and 'personal' otherwise. "
-    "For 'tick_task': choose ONLY an exact task_id from the provided OPEN TASKS list; if the user specifies a custom "
-    "or partial unit count that does not match an open task, use 'log_progress' instead."
+    "First write the exact verbatim spoken/written words into 'transcript', then choose fields matching ONLY "
+    "what the user actually said. Do zero scheduling math. "
+    "For 'log_progress': match target_id strictly to the subject the user named in CONFIGURED TARGETS (never guess "
+    "a different subject). If the user says units (e.g. '0.75 units'), set units=0.75, papers=null, is_reading=false. "
+    "If the user says papers (e.g. 'half a paper' -> papers=0.5, 'a paper'/'one paper' -> papers=1, "
+    "'0.5 paper' -> papers=0.5, 'two papers' -> papers=2), set papers=<decimal>, units=null, is_reading=true "
+    "(do NOT convert papers to units yourself). "
+    "For 'update_target_dates': whenever the user sets or changes the due date or exam date of one or more targets "
+    "listed in CONFIGURED TARGETS, return action='update_target_dates' with one {target_id, date} item per matching "
+    "target using exact target_id values and YYYY-MM-DD dates. "
+    "For 'add_event': use YYYY-MM-DD dates; set all_day=true when no clock hours are given; for timed events use "
+    "24-hour HH:MM start_time and end_time; use calendar='university' for classes/exams and 'personal' otherwise. "
+    "For 'tick_task': choose ONLY an exact task_id from OPEN TASKS; if the user states a custom or fractional unit "
+    "or paper count, use 'log_progress' instead."
 )
 
 
@@ -310,7 +310,8 @@ def _request_action(
     call_gemini: Callable[..., str],
     audio_bytes: bytes | None = None,
     audio_mime_type: str = "audio/wav",
-) -> ParsedAction:
+    model: str | None = None,
+) -> tuple[ParsedAction, str | None]:
     kwargs: dict[str, Any] = {
         "system": _SYSTEM_PROMPT,
         "response_schema": ACTION_SCHEMA,
@@ -320,6 +321,8 @@ def _request_action(
     if audio_bytes is not None:
         kwargs["audio_bytes"] = audio_bytes
         kwargs["audio_mime_type"] = audio_mime_type
+    if model is not None:
+        kwargs["model"] = model
     raw_text = call_gemini(prompt, **kwargs)
     try:
         parsed = json.loads(raw_text)
@@ -327,7 +330,9 @@ def _request_action(
         raise RuntimeError(f"Gemini returned invalid JSON for action parsing: {raw_text[:200]}") from exc
     if not isinstance(parsed, dict):
         raise RuntimeError("Gemini action response must be a JSON object.")
-    return validate_action_payload(parsed, open_tasks, targets=targets)
+    raw_transcript = parsed.get("transcript")
+    transcript = str(raw_transcript).strip() if isinstance(raw_transcript, str) and raw_transcript.strip() else None
+    return validate_action_payload(parsed, open_tasks, targets=targets), transcript
 
 
 def parse_user_action(
@@ -344,7 +349,36 @@ def parse_user_action(
         raise ValueError("Please provide a plain-language instruction.")
 
     prompt = f"{_context_block(today, calendars, open_tasks, targets)}\n\nUSER INPUT: {cleaned}"
-    return _request_action(prompt, open_tasks=open_tasks, targets=targets, call_gemini=call_gemini)
+    action, _ = _request_action(prompt, open_tasks=open_tasks, targets=targets, call_gemini=call_gemini)
+    return action
+
+
+def parse_audio_action_with_transcript(
+    audio_bytes: bytes,
+    *,
+    today: date,
+    calendars: dict[str, str],
+    open_tasks: list[dict[str, Any]],
+    targets: list[dict[str, Any]] | None = None,
+    audio_mime_type: str = "audio/wav",
+    call_gemini: Callable[..., str] = generate_content,
+) -> tuple[ParsedAction, str | None]:
+    if not audio_bytes:
+        raise ValueError("Audio clip is empty.")
+
+    prompt = (
+        f"{_context_block(today, calendars, open_tasks, targets)}\n\n"
+        "USER INPUT: Transcribe the attached voice clip verbatim into 'transcript', then map it to one structured action."
+    )
+    return _request_action(
+        prompt,
+        open_tasks=open_tasks,
+        targets=targets,
+        call_gemini=call_gemini,
+        audio_bytes=audio_bytes,
+        audio_mime_type=audio_mime_type,
+        model=AUDIO_PARSE_MODEL,
+    )
 
 
 def parse_audio_action(
@@ -357,18 +391,13 @@ def parse_audio_action(
     audio_mime_type: str = "audio/wav",
     call_gemini: Callable[..., str] = generate_content,
 ) -> ParsedAction:
-    if not audio_bytes:
-        raise ValueError("Audio clip is empty.")
-
-    prompt = (
-        f"{_context_block(today, calendars, open_tasks, targets)}\n\n"
-        "USER INPUT: Listen to the attached voice clip and map it to one structured action."
-    )
-    return _request_action(
-        prompt,
+    action, _ = parse_audio_action_with_transcript(
+        audio_bytes,
+        today=today,
+        calendars=calendars,
         open_tasks=open_tasks,
         targets=targets,
-        call_gemini=call_gemini,
-        audio_bytes=audio_bytes,
         audio_mime_type=audio_mime_type,
+        call_gemini=call_gemini,
     )
+    return action

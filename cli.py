@@ -46,6 +46,8 @@ def _load_live_state(config: dict, list_name: str):
 
 
 def _print_replan_result(res) -> None:
+    if getattr(res, "transcript", None):
+        print(f'Heard: "{res.transcript}"')
     print(res.action_summary)
     if res.ticked_task:
         due = f", due {res.ticked_task['due']}" if res.ticked_task.get("due") else ""
@@ -138,6 +140,11 @@ def main() -> int:
         "--speak",
         action="store_true",
         help="Read back each replan explanation via $0 Edge neural TTS (falls back to local OS TTS).",
+    )
+    listen.add_argument(
+        "--chime",
+        action="store_true",
+        help="Play a short beep when the wake word is heard (off by default).",
     )
     args = parser.parse_args()
 
@@ -256,6 +263,7 @@ def main() -> int:
                 cooldown_seconds=args.cooldown,
                 once=args.once,
                 speak=args.speak,
+                chime=args.chime,
                 replan_fn=lambda wav_bytes: replan_from_audio(
                     wav_bytes,
                     list_name=args.list_name,

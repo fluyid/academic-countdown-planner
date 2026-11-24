@@ -119,15 +119,12 @@ def wait_for_wake_from_chunks(
         chunk = bytes(raw)
         if not chunk:
             break
+        # Require finalized AcceptWaveform results so transient partial noise never causes false wakes.
         if recognizer.AcceptWaveform(chunk):
             if detect_wake_in_result(recognizer.Result(), wake_phrase):
                 if hasattr(recognizer, "Reset"):
                     recognizer.Reset()
                 return True
-        elif detect_wake_in_result(recognizer.PartialResult(), wake_phrase):
-            if hasattr(recognizer, "Reset"):
-                recognizer.Reset()
-            return True
     return False
 
 
@@ -229,7 +226,7 @@ def run_wake_loop(
     cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS,
     once: bool = False,
     speak: bool = False,
-    chime: bool = True,
+    chime: bool = False,
     replan_fn: Callable[[bytes], Any],
     on_result: Callable[[Any], None],
     on_status: Callable[[str], None] = lambda msg: print(msg, flush=True),

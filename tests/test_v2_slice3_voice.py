@@ -466,7 +466,13 @@ class TestV2Slice3Voice(unittest.TestCase):
         paper_task_svc = FakeTasksService()
         paper_list_id = get_or_create_tasklist(paper_task_svc, "Countdown Planner (Test)")
         paper_replies = iter([
-            json.dumps({"action": "log_progress", "target_id": "ethics-essay", "papers": 1, "is_reading": True}),
+            json.dumps({
+                "transcript": "I finished one paper for Ethics Essay",
+                "action": "log_progress",
+                "target_id": "ethics-essay",
+                "papers": 1,
+                "is_reading": True,
+            }),
             "Logged 1 paper for Ethics Essay; 3 papers remain.",
         ])
         with tempfile.TemporaryDirectory() as tmp:
@@ -488,6 +494,7 @@ class TestV2Slice3Voice(unittest.TestCase):
                 refresh_fn=fake_refresh,
             )
         self.assertIsInstance(res_paper.action, LogProgressAction)
+        self.assertEqual(res_paper.transcript, "I finished one paper for Ethics Essay")
         self.assertEqual(res_paper.action.papers, 1.0)
         self.assertIn("Ethics Essay (1 paper)", res_paper.action_summary)
         self.assertTrue(

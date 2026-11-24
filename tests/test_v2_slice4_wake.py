@@ -84,14 +84,14 @@ class TestV2Slice4Wake(unittest.TestCase):
         model_path = default_vosk_model_dir().resolve()
         self.assertFalse(model_path.is_relative_to(REPO_ROOT))
 
-    def test_listen_for_wake_word_partial_final_and_idle_eof(self) -> None:
+    def test_listen_for_wake_word_final_result_and_ignores_transient_partial(self) -> None:
         chunk = _pcm_chunk(100, frames=3200)
 
-        # 1. Partial match triggers immediately, resets recognizer, and closes mic stream.
-        rec_partial = _FakeVoskRecognizer([
-            (False, "", '{"partial": ""}'),
-            (True, '{"text": "[unk]"}', ""),
+        # 1. Transient partial flash alone must NOT trigger a phantom wake; only finalized Result() triggers.
+        rec_final = _FakeVoskRecognizer([
             (False, "", '{"partial": "hey gemini"}'),
+            (True, '{"text": "[unk]"}', ""),
+            (True, '{"text": "hey gemini"}', ""),
             (False, "", '{"partial": "never reached"}'),
         ])
         stream1 = _FakeRawInputStream([chunk] * 4)
@@ -100,27 +100,16 @@ class TestV2Slice4Wake(unittest.TestCase):
         detected = listen_for_wake_word(
             wake_phrase=DEFAULT_WAKE_PHRASE,
             stream_factory=lambda **kw: stream1,
-            recognizer_factory=lambda sr, g: (grammars_seen.append(g) or rec_partial),
+            recognizer_factory=lambda sr, g: (grammars_seen.append(g) or rec_final),
         )
         self.assertTrue(detected)
         self.assertEqual(stream1.reads, 3)
         self.assertTrue(stream1.closed)
-        self.assertEqual(rec_partial.reset_count, 1)
+        self.assertEqual(rec_final.reset_count, 1)
         self.assertEqual(json.loads(grammars_seen[0]), ["hey gemini", "[unk]"])
 
-        # 2. Final waveform result match also triggers cleanly.
-        rec_final = _FakeVoskRecognizer([(True, '{"text": "hey gemini"}', "")])
-        stream2 = _FakeRawInputStream([chunk] * 2)
-        self.assertTrue(
-            listen_for_wake_word(
-                stream_factory=lambda **kw: stream2,
-                recognizer_factory=lambda sr, g: rec_final,
-            )
-        )
-        self.assertEqual(rec_final.reset_count, 1)
-
-        # 3. Stream ends without wake phrase -> returns False, zero false positives.
-        rec_idle = _FakeVoskRecognizer([(True, '{"text": "[unk]"}', ""), (False, "", '{"partial": ""}')])
+        # 2. Stream ends without finalized wake phrase -> returns False, zero false positives.
+        rec_idle = _FakeVoskRecognizer([(False, "", '{"partial": "hey gemini"}'), (True, '{"text": "[unk]"}', "")])
         stream3 = _FakeRawInputStream([chunk] * 2)
         self.assertFalse(
             listen_for_wake_word(
