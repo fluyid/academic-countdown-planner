@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from datetime import date
+import math
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from src.planner.models import Allocation, DayPlan, EPS, StudyPlan, TargetSummary
+from src.planner.formatter import format_pages, format_unit_ratio, format_units
+from src.planner.models import Allocation, DayPlan, EPS, StudyPlan, TargetSummary, reading_target_id
 
 MAX_MILESTONES = 6
+DEFAULT_CARD_OPACITY = 0.28
+MIN_CARD_OPACITY = 0.2
+MAX_CARD_OPACITY = 0.95
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_BACKGROUND_PATH = REPO_ROOT / "assets" / "background.jpg"
 
@@ -26,8 +31,16 @@ def format_day_heading(d: date) -> str:
     return f"{d.strftime('%a')}, {d.strftime('%b')} {d.day}"
 
 
-def _fmt_units(value: float) -> str:
-    return f"{round(value, 4):g}"
+def clamp_card_opacity(value: Any) -> float:
+    if value is None or isinstance(value, bool):
+        return DEFAULT_CARD_OPACITY
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_CARD_OPACITY
+    if not math.isfinite(num):
+        return DEFAULT_CARD_OPACITY
+    return round(max(MIN_CARD_OPACITY, min(MAX_CARD_OPACITY, num)), 4)
 
 
 def _resolve_background(background: str | Path | None) -> str | None:
@@ -88,10 +101,11 @@ def _pick_countdown(plan: StudyPlan, config: dict[str, Any], today: date) -> dic
 def _allocation_item(alloc: Allocation) -> dict[str, Any]:
     is_optional = alloc.target_id == "paper-reading"
     name = "Optional Paper Reading" if is_optional else alloc.name
-    progress = f"{_fmt_units(alloc.cumulative)}/{_fmt_units(alloc.total)}u" if alloc.total is not None else "Optional"
+    units = f"{format_units(alloc.units)} ({format_pages(alloc.pages)})" if alloc.pages is not None else format_units(alloc.units)
+    progress = format_unit_ratio(alloc.cumulative, alloc.total) if alloc.total is not None else "Optional"
     return {
         "name": name,
-        "units": f"{_fmt_units(alloc.units)}u",
+        "units": units,
         "progress": progress,
         "is_optional": is_optional,
     }
@@ -123,7 +137,7 @@ def _build_today(plan: StudyPlan, today: date, completed_days: set[date]) -> dic
         return {**base, "status": "open", "badge": "Rest", "headline": "Outside study window"}
     if day_plan.allocations:
         kind = "Free day" if day_plan.day_type == "free" else "Class day"
-        badge = f"{kind} \u00b7 {_fmt_units(day_plan.capacity)}u"
+        badge = f"{kind} \u00b7 {format_units(day_plan.capacity)}"
         detail = day_plan.reason if day_plan.day_type == "class" and day_plan.reason else ""
         return {
             **base,
@@ -155,7 +169,11 @@ def _build_milestones(
     )
     milestones: list[dict[str, Any]] = []
     for _, t in ordered[:max_milestones]:
-        done = round(max(0.0, float(completed_units.get(t.target_id, 0.0))), 4)
+        done = round(
+            max(0.0, float(completed_units.get(t.target_id, 0.0)))
+            + max(0.0, float(completed_units.get(reading_target_id(t.target_id), 0.0))),
+            4,
+        )
         req = round(max(0.0, float(t.required)), 4)
         pct = min(100, round((done / req) * 100)) if req > EPS else 0
         milestones.append(
@@ -163,7 +181,7 @@ def _build_milestones(
                 "name": t.name,
                 "kind": "Exam" if t.target_type == "exam" else "Assignment",
                 "date_label": format_short_date(t.due_date) if t.due_date else "Date TBD",
-                "progress_label": f"{_fmt_units(done)}/{_fmt_units(req)}u" if req > EPS else "Open",
+                "progress_label": format_unit_ratio(done, req) if req > EPS else "Open",
                 "percent": pct,
                 "done": req > EPS and done + EPS >= req,
             }
@@ -173,7 +191,7 @@ def _build_milestones(
 
 def _status_note(plan: StudyPlan) -> str | None:
     if plan.unscheduled:
-        shortfall = ", ".join(f"{name} ({_fmt_units(u)}u)" for name, u in plan.unscheduled.items())
+        shortfall = ", ".join(f"{name} ({format_units(u)})" for name, u in plan.unscheduled.items())
         return f"Tight schedule \u00b7 Unscheduled: {shortfall}"
     if plan.optional_shed:
         return "Tight schedule \u00b7 Optional reading paused"
@@ -193,10 +211,11 @@ def build_display_data(
     ref_day = today or plan.start_date
     done_units = completed_units or {}
     done_days = completed_days or set()
+    display_cfg = config.get("display") or {}
     if background is not None:
         bg_source: str | Path | None = background
     else:
-        cfg_bg = config.get("display", {}).get("background")
+        cfg_bg = display_cfg.get("background")
         bg_source = cfg_bg if cfg_bg is not None else (DEFAULT_BACKGROUND_PATH if DEFAULT_BACKGROUND_PATH.is_file() else None)
     return {
         "generated_for": ref_day.isoformat(),
@@ -205,4 +224,5 @@ def build_display_data(
         "milestones": _build_milestones(plan.targets, done_units, max_milestones=max_milestones),
         "status_note": _status_note(plan),
         "background_url": _resolve_background(bg_source),
+        "card_opacity": clamp_card_opacity(display_cfg.get("card_opacity")),
     }

@@ -6,6 +6,9 @@
   "tasks": {
     "list_name": "Countdown Planner (Test)"
   },
+  "display": {
+    "card_opacity": 0.28
+  },
   "window": {
     "anchor_label": "Intro to NLP Exam",
     "anchor_date": "2026-12-14"
@@ -41,7 +44,11 @@
       "name": "Ethics Essay",
       "date": null,
       "units": null,
-      "priority": 2
+      "priority": 2,
+      "required_papers": {
+        "count": 4,
+        "pages_per_paper": 20
+      }
     },
     {
       "id": "cv-assignment",
@@ -49,7 +56,11 @@
       "name": "Computer Vision Assignment",
       "date": null,
       "units": null,
-      "priority": 2
+      "priority": 2,
+      "required_papers": {
+        "count": 3,
+        "pages_per_paper": 20
+      }
     }
   ],
   "optional_work": {
@@ -64,6 +75,8 @@
     "class_day_max_hours": 3.5,
     "class_day_units": 0.25,
     "blocked_day_units": 0.0,
-    "blocked_keywords": ["trip", "exam", "date"]
+    "blocked_keywords": ["trip", "exam", "date"],
+    "max_reading_pages_per_day": 40,
+    "pages_per_unit": 40
   }
 }

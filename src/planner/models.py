@@ -10,6 +10,12 @@ from typing import Any
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "targets.json"
 EPS = 1e-9
+PAGES_PER_UNIT = 40.0
+DEFAULT_MAX_READING_PAGES_PER_DAY = 40.0
+
+
+def reading_target_id(target_id: str) -> str:
+    return f"{target_id}:reading"
 
 
 @dataclass
@@ -20,6 +26,8 @@ class Allocation:
     units: float
     cumulative: float
     total: float | None
+    pages: float | None = None
+    is_reading: bool = False
 
 
 @dataclass
@@ -41,6 +49,8 @@ class TargetSummary:
     due_date: date | None
     scheduled: float
     required: float
+    reading_scheduled: float = 0.0
+    reading_required: float = 0.0
 
 
 @dataclass

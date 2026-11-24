@@ -24,6 +24,7 @@ from src.gemini import (
     replan_from_text,
 )
 from src.gemini.client import REPO_ROOT
+from src.gemini.explain import summarize_plan_changes
 from src.planner import build_plan, load_config
 from src.tasks import get_or_create_tasklist, sync_plan_to_tasks
 from src.wallpaper import RefreshResult, render_schedule_definition
@@ -229,6 +230,14 @@ class TestSlice6Gemini(unittest.TestCase):
         nov29 = next(d for d in res2.after_plan.days if d.day == date(2026, 11, 29))
         self.assertEqual(nov29.day_type, "class")
         self.assertEqual(nov29.capacity, 0.25)
+
+        # Gemini plan summary clearly labels required paper reading with pages and breakdown.
+        summary = summarize_plan_changes(seed_plan, seed_plan, today=date(2026, 12, 5))
+        self.assertIn("Required Paper Reading", summary["today_plan"])
+        self.assertIn("20 pages", summary["today_plan"])
+        ethics_target = next(t for t in summary["targets"] if t["name"] == "Ethics Essay")
+        self.assertEqual(ethics_target["required_reading_required"], 2.0)
+        self.assertIn("60 pages", summary["optional_paper_reading"])
 
     def test_tick_task_echoes_exact_task_and_preserves_progress(self) -> None:
         cal_svc = FakeCalendarService()

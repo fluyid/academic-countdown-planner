@@ -8,7 +8,14 @@ from pathlib import Path
 from typing import Any, Callable
 
 from src.calendar_client import CONFIG_PATH, create_calendar_event, get_calendar_service, get_events_in_window
-from src.gemini.actions import AddEventAction, ParsedAction, TickTaskAction, UnclearAction, parse_user_action
+from src.gemini.actions import (
+    AddEventAction,
+    ParsedAction,
+    TickTaskAction,
+    UnclearAction,
+    parse_audio_action,
+    parse_user_action,
+)
 from src.gemini.client import generate_content
 from src.gemini.explain import explain_replan
 from src.planner import StudyPlan, build_plan, load_config, plan_window
@@ -52,8 +59,8 @@ def _format_event_summary(action: AddEventAction, created: dict[str, Any]) -> st
     )
 
 
-def replan_from_text(
-    utterance: str,
+def _replan(
+    parse_action: Callable[[date, dict[str, str], list[dict[str, Any]]], ParsedAction],
     *,
     config_path: Path = CONFIG_PATH,
     list_name: str | None = None,
@@ -86,13 +93,7 @@ def replan_from_text(
     )
 
     open_tasks = [t for t in tasks_before if t.get("status") != "completed" and t.get("id")]
-    action = parse_user_action(
-        utterance,
-        today=ref_day,
-        calendars=config.get("calendars", {}),
-        open_tasks=open_tasks,
-        call_gemini=call_gemini,
-    )
+    action = parse_action(ref_day, config.get("calendars", {}), open_tasks)
 
     if isinstance(action, UnclearAction):
         return ReplanResult(
@@ -165,4 +166,70 @@ def replan_from_text(
         before_plan=before_plan,
         after_plan=after_plan,
         explanation=explanation,
+    )
+
+
+def replan_from_text(
+    utterance: str,
+    *,
+    config_path: Path = CONFIG_PATH,
+    list_name: str | None = None,
+    today: date | None = None,
+    background: str | Path | None = None,
+    apply_lock_screen: bool = True,
+    calendar_service: Any = None,
+    tasks_service: Any = None,
+    call_gemini: Callable[..., str] = generate_content,
+    refresh_fn: Callable[..., RefreshResult] = refresh_screen,
+) -> ReplanResult:
+    return _replan(
+        lambda ref_day, cals, open_tasks: parse_user_action(
+            utterance, today=ref_day, calendars=cals, open_tasks=open_tasks, call_gemini=call_gemini
+        ),
+        config_path=config_path,
+        list_name=list_name,
+        today=today,
+        background=background,
+        apply_lock_screen=apply_lock_screen,
+        calendar_service=calendar_service,
+        tasks_service=tasks_service,
+        call_gemini=call_gemini,
+        refresh_fn=refresh_fn,
+    )
+
+
+def replan_from_audio(
+    audio_bytes: bytes,
+    *,
+    audio_mime_type: str = "audio/wav",
+    config_path: Path = CONFIG_PATH,
+    list_name: str | None = None,
+    today: date | None = None,
+    background: str | Path | None = None,
+    apply_lock_screen: bool = True,
+    calendar_service: Any = None,
+    tasks_service: Any = None,
+    call_gemini: Callable[..., str] = generate_content,
+    refresh_fn: Callable[..., RefreshResult] = refresh_screen,
+) -> ReplanResult:
+    if not audio_bytes:
+        raise ValueError("Audio clip is empty.")
+    return _replan(
+        lambda ref_day, cals, open_tasks: parse_audio_action(
+            audio_bytes,
+            today=ref_day,
+            calendars=cals,
+            open_tasks=open_tasks,
+            audio_mime_type=audio_mime_type,
+            call_gemini=call_gemini,
+        ),
+        config_path=config_path,
+        list_name=list_name,
+        today=today,
+        background=background,
+        apply_lock_screen=apply_lock_screen,
+        calendar_service=calendar_service,
+        tasks_service=tasks_service,
+        call_gemini=call_gemini,
+        refresh_fn=refresh_fn,
     )

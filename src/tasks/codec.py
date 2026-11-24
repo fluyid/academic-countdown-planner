@@ -6,20 +6,18 @@ import json
 from datetime import date
 from typing import Any
 
+from src.planner.formatter import format_allocation_amount, format_unit_ratio, format_units
 from src.planner.models import Allocation, DayPlan
 
 META_PREFIX = "[countdown-planner] "
 
 
-def _fmt_units(value: float) -> str:
-    return f"{round(value, 4):g}"
-
-
 def _title_part(alloc: Allocation) -> str:
-    label = "Paper Reading" if alloc.target_id == "paper-reading" else alloc.name
+    label = "Optional Paper Reading" if alloc.target_id == "paper-reading" else alloc.name
+    amount = format_allocation_amount(alloc)
     if alloc.total is not None:
-        return f"{label} ({_fmt_units(alloc.units)}u, {_fmt_units(alloc.cumulative)}/{_fmt_units(alloc.total)})"
-    return f"{label} ({_fmt_units(alloc.units)}u)"
+        return f"{label} ({amount}, {format_unit_ratio(alloc.cumulative, alloc.total)})"
+    return f"{label} ({amount})"
 
 
 def build_task_body(day_plan: DayPlan) -> dict[str, str]:
@@ -27,11 +25,11 @@ def build_task_body(day_plan: DayPlan) -> dict[str, str]:
     due = f"{day_plan.day.isoformat()}T00:00:00.000Z"
 
     reason = f"; {day_plan.reason}" if day_plan.day_type == "class" and day_plan.reason else ""
-    lines = [f"Day: {day_plan.day.isoformat()} ({day_plan.day_type}, {_fmt_units(day_plan.capacity)}u{reason})"]
+    lines = [f"Day: {day_plan.day.isoformat()} ({day_plan.day_type}, {format_units(day_plan.capacity)}{reason})"]
     units_by_id: dict[str, float] = {}
     for a in day_plan.allocations:
-        prog = f" ({_fmt_units(a.cumulative)}/{_fmt_units(a.total)})" if a.total is not None else ""
-        lines.append(f"- {a.name}: {_fmt_units(a.units)}u{prog}")
+        prog = f" ({format_unit_ratio(a.cumulative, a.total)})" if a.total is not None else ""
+        lines.append(f"- {a.name}: {format_allocation_amount(a)}{prog}")
         units_by_id[a.target_id] = round(units_by_id.get(a.target_id, 0.0) + a.units, 4)
 
     meta = json.dumps({"day": day_plan.day.isoformat(), "units": units_by_id}, sort_keys=True, separators=(",", ":"))

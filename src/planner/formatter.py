@@ -1,8 +1,38 @@
-"""Plain-text rendering for a computed StudyPlan."""
+"""Plain-text rendering and unit label formatting for a computed StudyPlan."""
 
 from __future__ import annotations
 
-from src.planner.models import EPS, StudyPlan
+from src.planner.models import Allocation, EPS, StudyPlan
+
+
+def _fmt_num(value: float) -> str:
+    cleaned = round(float(value), 4)
+    if cleaned == 0:
+        cleaned = 0.0
+    return f"{cleaned:g}"
+
+
+def format_units(value: float) -> str:
+    cleaned = round(float(value), 4)
+    word = "unit" if abs(cleaned - 1.0) < EPS else "units"
+    return f"{_fmt_num(cleaned)} {word}"
+
+
+def format_unit_ratio(done: float, total: float) -> str:
+    cleaned_total = round(float(total), 4)
+    word = "unit" if abs(cleaned_total - 1.0) < EPS else "units"
+    return f"{_fmt_num(done)}/{_fmt_num(cleaned_total)} {word}"
+
+
+def format_pages(value: float) -> str:
+    cleaned = round(float(value), 4)
+    word = "page" if abs(cleaned - 1.0) < EPS else "pages"
+    return f"{_fmt_num(cleaned)} {word}"
+
+
+def format_allocation_amount(alloc: Allocation) -> str:
+    base = format_units(alloc.units)
+    return f"{base}, {format_pages(alloc.pages)}" if alloc.pages is not None else base
 
 
 def format_plan(plan: StudyPlan) -> str:
@@ -11,14 +41,21 @@ def format_plan(plan: StudyPlan) -> str:
     counts = {k: sum(1 for d in plan.days if d.day_type == k) for k in ("free", "class", "blocked")}
     lines = [
         f"Study Plan: {plan.start_date} to {plan.end_date} ({len(plan.days)} days)",
-        f"Capacity: {total_cap:.2f}u total | {total_sched:.2f}u scheduled | Free: {counts['free']} | Class: {counts['class']} | Blocked: {counts['blocked']}",
+        (
+            f"Capacity: {format_units(total_cap)} total | {format_units(total_sched)} scheduled | "
+            f"Free: {counts['free']} | Class: {counts['class']} | Blocked: {counts['blocked']}"
+        ),
         "",
     ]
     for d in plan.days:
-        tag = f"{d.day.isoformat()} ({d.day.strftime('%a')}) [{d.day_type:<7} {d.capacity:.2f}u]"
+        tag = f"{d.day.isoformat()} ({d.day.strftime('%a')}) [{d.day_type:<7} {format_units(d.capacity)}]"
         if d.allocations:
             parts = [
-                f"{a.name} ({a.units:.2f}u, {a.cumulative:.2f}/{a.total:.2f})" if a.total is not None else f"{a.name} ({a.units:.2f}u)"
+                (
+                    f"{a.name} ({format_allocation_amount(a)}, {format_unit_ratio(a.cumulative, a.total)})"
+                    if a.total is not None
+                    else f"{a.name} ({format_allocation_amount(a)})"
+                )
                 for a in d.allocations
             ]
             note = f"  [{d.reason}]" if d.day_type == "class" else ""
@@ -32,12 +69,20 @@ def format_plan(plan: StudyPlan) -> str:
     for t in plan.targets:
         due = t.due_date.isoformat() if t.due_date else "TBD"
         kind = "exam" if t.target_type == "exam" else "due"
-        lines.append(f"  [P{t.priority}] {t.name}: {t.scheduled:.2f}/{t.required:.2f}u ({kind} {due})")
+        if t.reading_required > EPS:
+            work_sched = round(max(0.0, t.scheduled - t.reading_scheduled), 4)
+            work_req = round(max(0.0, t.required - t.reading_required), 4)
+            detail = f"reading {format_unit_ratio(t.reading_scheduled, t.reading_required)} + work {format_unit_ratio(work_sched, work_req)}, {kind} {due}"
+        else:
+            detail = f"{kind} {due}"
+        lines.append(f"  [P{t.priority}] {t.name}: {format_unit_ratio(t.scheduled, t.required)} ({detail})")
     if plan.optional_shed:
-        lines.append("  [P3] Optional Paper Reading: 0.00u (dropped -- tight schedule)")
+        lines.append("  [P3] Optional Paper Reading: 0 units (dropped -- tight schedule)")
     elif plan.optional_units > EPS:
-        lines.append(f"  [P3] Optional Paper Reading: {plan.optional_units:.2f}u")
+        opt_pages = round(sum(a.pages or 0.0 for d in plan.days for a in d.allocations if a.target_id == "paper-reading"), 4)
+        page_note = f" ({format_pages(opt_pages)})" if opt_pages > EPS else ""
+        lines.append(f"  [P3] Optional Paper Reading: {format_units(plan.optional_units)}{page_note}")
     if plan.unscheduled:
-        shortfall = ", ".join(f"{name} ({units:.2f}u)" for name, units in plan.unscheduled.items())
+        shortfall = ", ".join(f"{name} ({format_units(units)})" for name, units in plan.unscheduled.items())
         lines.append(f"Unscheduled: {shortfall}")
     return "\n".join(lines)

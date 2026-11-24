@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 from datetime import date
 from typing import Any
@@ -116,19 +117,68 @@ class TestSlice3Tasks(unittest.TestCase):
             allocations=[Allocation("nlp-exam", "Introduction to NLP", 1, 1.0, 1.0, 5.0)],
         )
         body = build_task_body(day_plan)
-        self.assertEqual(body["title"], "Introduction to NLP (1u, 1/5)")
+        self.assertEqual(body["title"], "Introduction to NLP (1 unit, 1/5 units)")
         self.assertEqual(body["due"], "2026-11-20T00:00:00.000Z")
+        self.assertIn("Day: 2026-11-20 (free, 1 unit)", body["notes"])
+        self.assertIn("- Introduction to NLP: 1 unit (1/5 units)", body["notes"])
+        self.assertIsNone(re.search(r"\d+u\b", body["title"]))
+        self.assertIsNone(re.search(r"\d+u\b", body["notes"]))
         self.assertEqual(parse_task_meta(body), (date(2026, 11, 20), {"nlp-exam": 1.0}))
+
+        # Legacy V1 completed tasks with '1u' human text still parse identically via [countdown-planner] metadata.
+        legacy_v1 = {
+            "id": "t-v1",
+            "status": "completed",
+            "title": "Introduction to NLP (1u, 1/5)",
+            "notes": 'Day: 2026-11-19 (free, 1u)\n- Introduction to NLP: 1u (1/5)\n\n[countdown-planner] {"day":"2026-11-19","units":{"nlp-exam":1.0}}',
+        }
+        self.assertEqual(parse_task_meta(legacy_v1), (date(2026, 11, 19), {"nlp-exam": 1.0}))
 
         tasks = [
             {"id": "t1", "status": "completed", **body},
+            legacy_v1,
             {"id": "t2", "status": "needsAction", **body},
             {"id": "t3", "status": "completed", "title": "Buy coffee", "notes": "personal note"},
             {"id": "t4", "status": "completed", "title": "Broken", "notes": "[countdown-planner] {bad json"},
         ]
         units, days = read_completed_progress(tasks)
-        self.assertEqual(units, {"nlp-exam": 1.0})
-        self.assertEqual(days, {date(2026, 11, 20)})
+        self.assertEqual(units, {"nlp-exam": 2.0})
+        self.assertEqual(days, {date(2026, 11, 19), date(2026, 11, 20)})
+
+    def test_paper_reading_task_labels_and_backwards_compatible_progress(self) -> None:
+        day_plan = DayPlan(
+            day=date(2026, 12, 5),
+            day_type="free",
+            capacity=1.0,
+            scheduled_hours=0.0,
+            reason="",
+            allocations=[
+                Allocation("ethics-essay:reading", "Ethics Essay — Required Paper Reading", 2, 0.5, 0.5, 2.0, pages=20.0, is_reading=True),
+                Allocation("paper-reading", "Optional Paper Reading (Read abstract + introduction and keep a note)", 3, 0.5, 0.5, None, pages=20.0, is_reading=True),
+            ],
+        )
+        body = build_task_body(day_plan)
+        self.assertIn("Ethics Essay — Required Paper Reading (0.5 units, 20 pages, 0.5/2 units)", body["title"])
+        self.assertIn("Optional Paper Reading (0.5 units, 20 pages)", body["title"])
+        self.assertIn("20 pages", body["notes"])
+        self.assertIsNone(re.search(r"\d+u\b", body["title"]))
+        self.assertIsNone(re.search(r"\d+u\b", body["notes"]))
+        self.assertEqual(parse_task_meta(body), (date(2026, 12, 5), {"ethics-essay:reading": 0.5, "paper-reading": 0.5}))
+
+        legacy_assign = {
+            "id": "t-v1-ethics",
+            "status": "completed",
+            "title": "Ethics Essay (1u, 1/2)",
+            "notes": '[countdown-planner] {"day":"2026-12-04","units":{"ethics-essay":1.0}}',
+        }
+        units, days = read_completed_progress([{"id": "t-read", "status": "completed", **body}, legacy_assign])
+        self.assertEqual(units, {"ethics-essay:reading": 0.5, "paper-reading": 0.5, "ethics-essay": 1.0})
+        self.assertEqual(days, {date(2026, 12, 4), date(2026, 12, 5)})
+
+        plan = build_plan(self.config, [], start_date=date(2026, 11, 20), completed_units=units)
+        remaining_read = sum(a.units for d in plan.days for a in d.allocations if a.target_id == "ethics-essay:reading")
+        remaining_work = sum(a.units for d in plan.days for a in d.allocations if a.target_id == "ethics-essay")
+        self.assertEqual((remaining_read, remaining_work), (1.5, 1.0))
 
     def test_planner_respects_completed_units_and_days(self) -> None:
         plan = build_plan(

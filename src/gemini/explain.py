@@ -7,6 +7,7 @@ from datetime import date
 from typing import Any, Callable
 
 from src.gemini.client import generate_content
+from src.planner.formatter import format_allocation_amount, format_pages, format_unit_ratio, format_units
 from src.planner.models import DayPlan, EPS, StudyPlan
 
 EXPLAIN_MAX_OUTPUT_TOKENS = 220
@@ -21,9 +22,9 @@ _SYSTEM_PROMPT = (
 def _day_label(day_plan: DayPlan) -> str:
     if day_plan.allocations:
         return " + ".join(
-            f"{a.name} ({round(a.units, 4):g}u, {round(a.cumulative, 4):g}/{round(a.total, 4):g})"
+            f"{a.name} ({format_allocation_amount(a)}, {format_unit_ratio(a.cumulative, a.total)})"
             if a.total is not None
-            else f"{a.name} ({round(a.units, 4):g}u)"
+            else f"{a.name} ({format_allocation_amount(a)})"
             for a in day_plan.allocations
         )
     if day_plan.day_type == "blocked":
@@ -54,6 +55,9 @@ def summarize_plan_changes(
     today_plan = next((d for d in after.days if d.day == ref_day), None)
     next_study = next((d for d in after.days if d.day >= ref_day and d.allocations), None)
 
+    opt_pages = round(sum(a.pages or 0.0 for d in after.days for a in d.allocations if a.target_id == "paper-reading"), 4)
+    opt_page_note = f" ({format_pages(opt_pages)})" if opt_pages > EPS else ""
+
     return {
         "today": ref_day.isoformat(),
         "today_plan": _day_label(today_plan) if today_plan else "outside window",
@@ -69,13 +73,21 @@ def summarize_plan_changes(
                 "scheduled": round(t.scheduled, 4),
                 "required": round(t.required, 4),
                 "due": t.due_date.isoformat() if t.due_date else "TBD",
+                **(
+                    {
+                        "required_reading_scheduled": round(t.reading_scheduled, 4),
+                        "required_reading_required": round(t.reading_required, 4),
+                    }
+                    if t.reading_required > EPS
+                    else {}
+                ),
             }
             for t in after.targets
         ],
         "optional_paper_reading": (
             "dropped (tight schedule)"
             if after.optional_shed
-            else f"{round(after.optional_units, 4):g}u scheduled"
+            else f"{format_units(after.optional_units)}{opt_page_note} scheduled"
             if after.optional_units > EPS
             else "none"
         ),
